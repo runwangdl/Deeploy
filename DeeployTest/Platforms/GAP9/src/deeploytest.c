@@ -21,6 +21,9 @@
 // on these, so 768 B is enough.
 // Overridable via -DSLAVESTACKSIZE=<n> from CMake (the #ifndef keeps a
 // command-line define from tripping "redefined" under -Werror).
+// 512 B/core is what my own GAP9 training runs used successfully
+// (result_check.md: "CC 4096 / slave 512", --l1 122000). 9 cores x 512 = 4608 B,
+// leaving 131072 - 4608 - 4096 = 122368 B of TCDM for the tiler, hence --l1 122000.
 #ifndef SLAVESTACKSIZE
 #define SLAVESTACKSIZE 768
 #endif
