@@ -29,10 +29,15 @@ if(POWER_MEASUREMENT)
   target_compile_definitions(${ProjectId} PRIVATE POWER_MEASUREMENT)
 endif()
 
+# L1-memory knobs. SLAVESTACKSIZE sizes the per-core slave stacks (defaults to
+# 768 B in deeploytest.c; moving them into L1 TCDM at that size took the full
+# FEMBA model from 288M to 180M cycles). CC_STACK_SIZE sizes the cluster
+# controller / master stack, which also lives in L1.
+# Example: cmake ... -DSLAVESTACKSIZE=768 -DCC_STACK_SIZE=4098
 if(SLAVESTACKSIZE)
   target_compile_definitions(${ProjectId} PRIVATE SLAVESTACKSIZE=${SLAVESTACKSIZE})
-# L1-memory knob - size the cluster-controller (CC / master) stack from the build.
-# Example (CI / command line): cmake ... -DCC_STACK_SIZE=8192  (see deeploytest.c).
+endif()
+
 if(CC_STACK_SIZE)
   target_compile_definitions(${ProjectId} PRIVATE CC_STACK_SIZE=${CC_STACK_SIZE})
 endif()

@@ -87,11 +87,18 @@ macro(add_gvsoc_emulation name target)
         set(GVSOC_EXECUTABLE "${GVSOC_INSTALL_DIR}/bin/gvsoc")
 
         # L2 mode: run directly without flash operations
+        # --py-stack is required here for the same reason the L3/gapy path above
+        # passes it: without it the gap9.evk target module cannot resolve its
+        # 'gapylib.chips.gap.flash' dependency and every L2-mode run dies with
+        #   Input error: Dependency 'gapylib.chips.gap.flash' ... is missing
+        # before the binary is even loaded. That made every kernel test (which
+        # defaults to L2) unrunnable while full models (L3) worked.
         set(GVSOC_CMD
             ${GVSOC_EXECUTABLE}
             --target=${target}
             --binary ${GVSOC_BINARY}
             --work-dir=${GVSOC_WORKDIR}
+            --py-stack
             image flash run
         )
 

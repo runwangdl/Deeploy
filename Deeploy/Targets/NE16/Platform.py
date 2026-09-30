@@ -36,6 +36,12 @@ class NE16Platform(GAP9Platform):
                 "GAP9Cluster",
                 includeList = [
                     "pmsis.h", "DeeployGAP9Math.h", "pulp_nn_kernels.h", "DeeployMchan.h", "CNN_BasicKernels_fp32.h",
+                    # CNN_Copy.h defines CNN_Float32Fps_T / CNN_Float32Fps, which the Quant
+                    # (fp32 -> int8) template emits. It carries no NE16_REG_* macros, so unlike
+                    # CNN_BasicKernels_NE16.h and ne16_utils.h it does not collide with
+                    # pulp-nnx's ne16_task_defs.h and has to stay in the list. Dropping it made
+                    # any graph with an fp32 input fail to compile on GAP9_w_NE16.
+                    "CNN_Copy.h",
                     "CycleCounter.h"
                 ],
             )
@@ -63,6 +69,12 @@ class MemoryNE16Platform(MemoryGAP9Platform):
                 "GAP9Cluster",
                 includeList = [
                     "pmsis.h", "DeeployGAP9Math.h", "pulp_nn_kernels.h", "DeeployMchan.h", "CNN_BasicKernels_fp32.h",
+                    # CNN_Copy.h defines CNN_Float32Fps_T / CNN_Float32Fps, which the Quant
+                    # (fp32 -> int8) template emits. It carries no NE16_REG_* macros, so unlike
+                    # CNN_BasicKernels_NE16.h and ne16_utils.h it does not collide with
+                    # pulp-nnx's ne16_task_defs.h and has to stay in the list. Dropping it made
+                    # any graph with an fp32 input fail to compile on GAP9_w_NE16.
+                    "CNN_Copy.h",
                     "CycleCounter.h"
                 ],
             )

@@ -60,6 +60,7 @@ from Deeploy.Targets.Generic.Parsers import AddParser, ConcatParser, DequantPars
     TransposeParser, UniformRequantShiftParser, UnsqueezeParser, iHardswishParser, iLayerNormParser, iRMSNormParser, \
     iSoftmaxParser
 from Deeploy.Targets.Generic.Templates import AllocateTemplate as BasicAllocateTemplate
+from Deeploy.Targets.Generic.TopologyOptimizationPasses.Passes import SplitToSlicePass
 from Deeploy.Targets.Generic.TopologyOptimizationPasses.Passes import DequantPatternPass, DequantQuantMergePass, \
     IntegerDivRequantMergePass, MergeConstAddAndRequantPass, MergeTrueIntegerDivRequantShiftPass, QuantPatternPass, \
     RQSSplitPass, SkipEmptyConcatPass, SkipUnityRequantPass, iGELURequantMergePass, iHardswishRequantMergePass
@@ -144,6 +145,9 @@ GAP9Optimizer = TopologyOptimizer(
         QuantPatternPass(),
         DequantPatternPass(),
         DequantQuantMergePass(),
+        # GAP9 has no Split binding; rewrite Split into the Slice nodes it already
+        # has. Needed by FEMBA, whose bidirectional blocks Split the in_proj output.
+        SplitToSlicePass(),
         # MatMulAddMergePass(),  # fuses to Gemm with transA=transB=0 — wrong layout
         # for MatMul inputs that don't share Gemm semantics; FP32
         # SkipConnection regressed from 0/16 to 16/16 errors under it.

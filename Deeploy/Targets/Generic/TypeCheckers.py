@@ -92,7 +92,10 @@ class AddChecker(SignPropTypeChecker):
 
     def _inferNumLevels(self, inputs: List[VariableBuffer],
                         operatorRepresentation: OperatorRepresentation) -> List[int]:
-        return [inputs[0].nLevels + inputs[1].nLevels]
+        # int() both sides: nLevels can arrive as a numpy scalar whose dtype came
+        # from the tensor (e.g. int8), and under NumPy 2 adding a Python int that
+        # does not fit that dtype raises OverflowError instead of promoting.
+        return [int(inputs[0].nLevels) + int(inputs[1].nLevels)]
 
     def _inferSignedness(self, inputs: List[VariableBuffer],
                          operatorRepresentation: OperatorRepresentation) -> List[bool]:
