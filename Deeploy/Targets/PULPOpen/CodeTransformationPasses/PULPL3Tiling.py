@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 from Deeploy.DeeployTypes import CodeGenVerbosity, CodeTransformationPass, ExecutionBlock, NetworkContext, _NoVerbosity
 from Deeploy.TilingExtension.AsyncDma import AsyncDma
@@ -30,11 +30,14 @@ class ProfilingPULPL3TilingGenerationDB(DoubleBufferingTilingCodeGeneration, Pro
 
 class PULPL3Tiling(CodeTransformationPass):
 
-    def __init__(self, externalMemory: str, localMemory: str, dma: AsyncDma):
+    def __init__(self, externalMemory: str, localMemory: str, dma: AsyncDma, dbDma: Optional[AsyncDma] = None):
+        
+        if dbDma is None:
+            dbDma = dma
         self.SB = PULPL3TilingGenerationSB(externalMemory, localMemory, dma)
-        self.DB = PULPL3TilingGenerationDB(externalMemory, localMemory, dma)
+        self.DB = PULPL3TilingGenerationDB(externalMemory, localMemory, dbDma)
         self.profilingSB = ProfilingPULPL3TilingGenerationSB(externalMemory, localMemory, dma)
-        self.profilingDB = ProfilingPULPL3TilingGenerationDB(externalMemory, localMemory, dma)
+        self.profilingDB = ProfilingPULPL3TilingGenerationDB(externalMemory, localMemory, dbDma)
 
     def apply(self,
               ctxt: NetworkContext,

@@ -21,12 +21,14 @@ from Deeploy.Targets.Generic.Templates import AddTemplate, BatchNormalizationTem
     FloatReluTemplate, FloatSigmoidTemplate, FloatSoftmaxTemplate, FloatSqrtTemplate, FloatSubTemplate, \
     FloatSwishTemplate, GatherTemplate, GemmTemplate, IntegerDivTemplate, ITAMaxTemplate, ITAPartialMaxTemplate, \
     MatMulTemplate, MaxPoolTemplate, MulTemplate, PadTemplate, QuantTemplate, ReduceMeanTemplate, ReduceSumTemplate, \
-    RequantShiftTemplate, ReshapeTemplate, RQIntegerDivTemplate, RQSiGELUTemplate, SliceTemplate, SubTemplate, \
+    RequantShiftTemplate, ReshapeTemplate, RQIntegerDivTemplate, RQSiGELUTemplate, SILUTemplate, SliceTemplate, \
+    SubTemplate, \
     TransposeTemplate, iGELUTemplate, iLayernormTemplate, iRMSNormTemplate, iSoftmaxTemplate
 from Deeploy.Targets.Generic.TypeCheckers import AddChecker, BatchNormChecker, ConcatChecker, ConvChecker, \
     DebugPrintChecker, DequantChecker, DivChecker, DummyChecker, GatherChecker, GELUChecker, GEMMChecker, \
     LayerNormChecker, MatMulChecker, MaxPoolChecker, MulChecker, PadChecker, QuantChecker, ReduceMeanChecker, \
-    ReduceSumChecker, ReluChecker, RequantShiftChecker, ReshapeChecker, RQIntegerDivChecker, SliceChecker, \
+    ReduceSumChecker, ReluChecker, RequantShiftChecker, ReshapeChecker, RQIntegerDivChecker, SILUChecker, \
+    SliceChecker, \
     SoftmaxChecker, TransposeChecker
 
 BasicTransformer = CodeTransformation([ArgumentStructGeneration(), MemoryManagementGeneration(), FutureGeneration()])
@@ -35,16 +37,23 @@ ReshapeSkipTransformer = CodeTransformation(
     [ArgumentStructGeneration(), MemoryPassthroughGeneration(),
      FutureGeneration()])
 
+BasicSILUBindings = [
+    NodeBinding(SILUChecker([PointerClass(int8_t)], [PointerClass(type)]), SILUTemplate.referenceTemplate,
+                BasicTransformer) for type in (int8_t, int32_t)
+]
+
+
 BasicSliceBindings = [
     NodeBinding(
         SliceChecker([
             PointerClass(type),
-            PointerClass(uint8_t),
-            PointerClass(uint8_t),
-            PointerClass(uint8_t),
-            PointerClass(uint8_t)
+            PointerClass(int_type),
+            PointerClass(int_type),
+            PointerClass(int_type),
+            PointerClass(int_type)
         ], [PointerClass(type)]), SliceTemplate.referenceTemplate, BasicTransformer)
     for type in (*FloatDataTypes, *IntegerDataTypes)
+    for int_type in (uint8_t, int8_t)
 ]
 
 BasicAddBindings = [

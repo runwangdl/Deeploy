@@ -52,6 +52,12 @@ from Deeploy.Targets.PULPOpen.Tiler import PULPAddTilingReadyBindings, PULPConca
     PULPUniformRQSTilingReadyBindings
 from Deeploy.Targets.PULPOpen.TopologyOptimizationPasses.Passes import PULPAddRequantMergePass, \
     PULPConvRequantMergePass, PULPGEMMRequantMergePass, PULPMatMulRequantMergePass
+from Deeploy.Targets.Generic.Layers import SILULayer
+from Deeploy.Targets.Generic.Parsers import SILUParser, iLayerNormParser
+from Deeploy.Targets.Generic.TopologyOptimizationPasses.Passes import SplitToSlicePass
+from Deeploy.Targets.PULPOpen.Layers import PULPSelectiveScanLayer, PULPSoftplusLayer
+from Deeploy.Targets.PULPOpen.Parsers import PULPSelectiveScanParser, PULPSoftplusParser
+from Deeploy.Targets.PULPOpen.Tiler import PULPDequantTilingReadyBindings, PULPQuantTilingReadyBindings, PULPRQSDWConv1DTilingReadyBindings, PULPSILUTilingReadyBindings, PULPSelectiveScanTilingReadyBindings, PULPSoftplusTilingReadyBindings, PULPUniformRQS_s32TilingReadyBindings
 
 RQAddMapper = NodeMapper(RQAddParser(), PULPRQAddTilingReadyBindings)
 AddMapper = NodeMapper(AddParser(), PULPAddTilingReadyBindings)
@@ -76,7 +82,7 @@ RQIntegerDivMapper = NodeMapper(RQIntegerDivParser(), [BasicRQIntegerDivBinding]
 RQGELU_int8_Mapper = NodeMapper(RQSiGELUParser(), PULPiRQSGELUTilingReadyBindings)
 
 Conv1DMapper = NodeMapper(PULPConv1DParser(), PULPRQSConv1DTilingReadyBindings)
-DWConv1DMapper = NodeMapper(PULPDWConv1DParser(), [PULPDWConv1DBinding])
+DWConv1DMapper = NodeMapper(PULPDWConv1DParser(), PULPRQSDWConv1DTilingReadyBindings)
 FPConv2DMapper = NodeMapper(PULPFPConv2DParser(), PULPConv2DTilingReadyBindings)
 Conv2DMapper = NodeMapper(PULPConv2DParser(), PULPRQSConv2DTilingReadyBindings)
 FPDWConv2DMapper = NodeMapper(PULPFPDWConv2DParser(), PULPDWConv2DTilingReadyBindings)
@@ -108,8 +114,13 @@ SoftmaxCrossEntropyLossMapper = NodeMapper(SoftmaxCrossEntropyLossParser(), PULP
 SoftmaxCrossEntropyLossGradMapper = NodeMapper(SoftmaxCrossEntropyLossGradParser(),
                                                PULPSoftmaxCrossEntropyGradTilingReadyBindings)
 SGDMapper = NodeMapper(SGDParser(), PULPSGDTilingReadyBindings)
-QuantMapper = NodeMapper(QuantParser(), BasicQuantBindings)
-DequantMapper = NodeMapper(DequantParser(), BasicDequantBindings)
+QuantMapper = NodeMapper(QuantParser(), PULPQuantTilingReadyBindings)
+DequantMapper = NodeMapper(DequantParser(), PULPDequantTilingReadyBindings)
+SILUMapper = NodeMapper(SILUParser(), PULPSILUTilingReadyBindings)
+SelectiveScanMapper = NodeMapper(PULPSelectiveScanParser(), PULPSelectiveScanTilingReadyBindings)
+SoftplusMapper = NodeMapper(PULPSoftplusParser(), PULPSoftplusTilingReadyBindings)
+UniformRequantShift_s32Mapper = NodeMapper(UniformRequantShiftParser(), PULPUniformRQS_s32TilingReadyBindings)
+iLayerNormMapper = NodeMapper(iLayerNormParser(), PULPLayernormTilingReadyBindings)
 GEMMDequantMapper = NodeMapper(PULPGEMMParser(), BasicGEMMBindings)
 PULPMapping = {
     'Conv': ConvLayer([FPConv2DMapper, FPDWConv2DMapper]),
@@ -118,8 +129,12 @@ PULPMapping = {
     'Gemm': GEMMLayer([FloatGEMMMapper, GEMMDequantMapper]),
     'Gelu': GELULayer([GELUMapper]),
     'GeluGrad': GELUGradLayer([GELUGradMapper]),
+    'SelectiveScan': PULPSelectiveScanLayer([SelectiveScanMapper]),
+    'SILU': SILULayer([SILUMapper]),
+    'Softplus': PULPSoftplusLayer([SoftplusMapper]),
     'LayerNormalization': LayerNormLayer([LayerNormMapper]),
     'LayerNormalizationGrad': LayerNormGradLayer([LayerNormGradMapper]),
+    'iLayerNorm': LayerNormLayer([iLayerNormMapper]),
     'MaxPool': MaxPoolLayer([MaxPool1DMapper, MaxPool2DMapper]),
     'RequantizediGELU': RQSiGELULayer([RQGELU_int8_Mapper]),
     'RQIntegerDiv': RQIntegerDivLayer([RQIntegerDivMapper]),
@@ -130,6 +145,7 @@ PULPMapping = {
     'ReduceMean': ReduceMeanLayer([ReduceMeanMapper]),
     'ReduceSum': ReduceSumLayer([ReduceSumMapper]),
     'RequantShift': RequantShiftLayer([UniformRequantShiftMapper, RequantShiftMapper]),
+    'RequantShift_s32': RequantShiftLayer([UniformRequantShift_s32Mapper]),
     'Add': AddLayer([AddMapper]),
     'Flatten': ReshapeLayer([FlattenMapper]),
     'Gather': GatherLayer([GatherMapper]),
@@ -227,6 +243,7 @@ class PULPStructBuffer(StructBuffer):
 PULPOptimizer = TopologyOptimizer([
     QuantPatternPass(),
     DequantPatternPass(),
+    SplitToSlicePass(),
     SkipEmptyConcatPass(),
     SkipUnityRequantPass(previous_op_regex = "Concat", num_inputs = 2),
     SkipUnityRequantPass(previous_op_regex = "Reshape|Transpose", num_inputs = 1),

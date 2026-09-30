@@ -38,6 +38,11 @@ from Deeploy.Targets.Generic.TopologyOptimizationPasses.Passes import DequantPat
     ExtractPaddingFromPoolPass, MatMulAddMergePass, MergeConstAddAndRequantPass, QuantPatternPass, \
     iGELURequantMergePass
 
+from Deeploy.Targets.Generic.Bindings import BasicSILUBindings
+from Deeploy.Targets.Generic.Layers import SILULayer
+from Deeploy.Targets.Generic.Parsers import SILUParser
+from Deeploy.Targets.Generic.TopologyOptimizationPasses.Passes import SplitToSlicePass
+
 AddMapper = NodeMapper(AddParser(), BasicAddBindings)
 SubMapper = NodeMapper(SubParser(), BasicSubBindings)
 Conv1DMapper = NodeMapper(GenericConv1DParser(), BasicConv1DBindings)
@@ -80,6 +85,7 @@ DequantMapper = NodeMapper(DequantParser(), BasicDequantBindings)
 BatchNormalizationMapper = NodeMapper(BatchNormParser(), BasicBatchNormBindings)
 ConvTransposeMapper = NodeMapper(ConvTranspose1DParser(), BasicConvTransposeBindings)
 SliceMapper = NodeMapper(SliceParser(), BasicSliceBindings)
+SILUMapper = NodeMapper(SILUParser(), BasicSILUBindings)
 CeilMapper = NodeMapper(CeilParser(), BasicCeilBindings)
 FloorMapper = NodeMapper(FloorParser(), BasicFloorBindings)
 ClipMapper = NodeMapper(ClipParser(), BasicClipBindings)
@@ -131,6 +137,7 @@ GenericMapping = {
     'Relu': ReluLayer([ReluMapper]),
     'RequantizediGELU': RQSiGELULayer([RQGELUMapper]),
     'RequantShift': RequantShiftLayer([RequantShiftMapper]),
+    'SILU': SILULayer([SILUMapper]),
     'Reshape': ReshapeLayer([ReshapeMapper]),
     'RQIntegerDiv': RQIntegerDivLayer([RQIntegerDivMapper]),
     'Squeeze': ReshapeLayer([UnsqueezeMapper]),
@@ -200,6 +207,7 @@ GenericOptimizer = TopologyOptimizer(
         ExtractPaddingFromPoolPass(),
         RemoveEmptyConvBiasPass(),
         RemoveOnlySingletonReduceMeanPass(),
+        SplitToSlicePass(),
         # DebugPrintPass(r'.*[Mm]at[Mm]ul.*', position = 'after'),
     ],
     name = "GenericOptimizer")

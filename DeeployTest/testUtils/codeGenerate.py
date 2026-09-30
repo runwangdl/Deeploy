@@ -252,8 +252,11 @@ def generateL3HexDump(deployer: NetworkDeployer, path: str, test_inputs: List, t
         typeStr, width = type2TypeStr(buf._type)
 
         # Word alignment
-        mod = (32 // width)
-        paddingLength = (mod - (array.size % mod)) % mod
+        byte_width = width // 8
+        total_bytes = array.size * byte_width
+        padding_bytes = (4 - (total_bytes % 4)) % 4
+        paddingLength = padding_bytes // byte_width  # back to elements
+
         paddedArray = np.pad(array.flatten(), (0, paddingLength), 'constant')
 
         paddedArray.astype(typeStr).tofile(path)

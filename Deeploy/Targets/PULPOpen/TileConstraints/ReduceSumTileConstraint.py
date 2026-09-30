@@ -22,104 +22,15 @@ class ReduceSumTileConstraint(TileConstraint):
         inputBufferName = parseDict['data_in']
         outputBufferName = parseDict['data_out']
 
-        inputBuffer = ctxt.lookup(inputBufferName)
-        outputBuffer = ctxt.lookup(outputBufferName)
-
-        inputShapeLen = len(inputBuffer.shape)
-        outputShapeLen = len(outputBuffer.shape)
-
-        # Add I/O dimensions to the model as variables
+        # The kernel accumulates over the whole reduction axes, and serializeTilingSolution below
+        # hands it one cube spanning the complete tensors. Pinning every dimension to its full
+        # extent keeps the buffers the tiler sizes consistent with those cubes, while still
+        # allowing the L3 -> L2 -> L1 transfer chain that UntiledTileConstraint cannot express.
         for bufferName in [inputBufferName, outputBufferName]:
             tilerModel.addTensorDimToModel(ctxt, bufferName)
 
-        # For ReduceSum, we need to handle dimension reduction
-        # If keepdims=True, all dimensions should match (reduced dims become 1)
-        # If keepdims=False, reduced dimensions are removed from output
-
-        keepdims = parseDict.get('keepdims', True)  # Default to True if not specified
-
-        if keepdims:
-            # keepdims=True: output has same number of dimensions as input
-            if inputShapeLen == outputShapeLen:
-                for idx in range(inputShapeLen):
-                    outputDim = tilerModel.getTensorDimVar(tensorName = outputBufferName, dimIdx = idx)
-                    inputDim = tilerModel.getTensorDimVar(tensorName = inputBufferName, dimIdx = idx)
-
-                    # For reduced dimensions, output should be 1
-                    if 'axis' in parseDict:
-                        axis = parseDict['axis']
-                        if isinstance(axis, int):
-                            axis = [axis]
-
-                        # Handle negative axis indexing
-                        normalized_axis = []
-                        for ax in axis:
-                            if ax < 0:
-                                ax = inputShapeLen + ax
-                            normalized_axis.append(ax)
-
-                        if idx in normalized_axis:
-                            # This dimension is reduced, output should be 1
-                            tilerModel.addConstraint(outputDim == 1)
-                        else:
-                            # This dimension is preserved
-                            tilerModel.addConstraint(outputDim == inputDim)
-                    else:
-                        # No axis specified, all dimensions are reduced to 1
-                        tilerModel.addConstraint(outputDim == 1)
-            else:
-                raise ValueError("With keepdims=True, input and output should have same number of dimensions")
-
-        else:
-            # keepdims=False: reduced dimensions are removed from output
-            if 'axis' in parseDict:
-                axis = parseDict['axis']
-                if isinstance(axis, int):
-                    axis = [axis]
-
-                # Handle negative axis indexing
-                normalized_axis = []
-                for ax in axis:
-                    if ax < 0:
-                        ax = inputShapeLen + ax
-                    normalized_axis.append(ax)
-                normalized_axis = sorted(normalized_axis)
-
-                # Expected output shape length
-                expected_output_len = inputShapeLen - len(normalized_axis)
-
-                if outputShapeLen != expected_output_len:
-                    raise ValueError(f"With keepdims=False and axis={axis}, expected output to have "
-                                     f"{expected_output_len} dimensions, but got {outputShapeLen}")
-
-                # Map input dimensions to output dimensions (skipping reduced ones)
-                output_idx = 0
-                for input_idx in range(inputShapeLen):
-                    if input_idx not in normalized_axis:
-                        # This dimension is preserved
-                        outputDim = tilerModel.getTensorDimVar(tensorName = outputBufferName, dimIdx = output_idx)
-                        inputDim = tilerModel.getTensorDimVar(tensorName = inputBufferName, dimIdx = input_idx)
-                        tilerModel.addConstraint(outputDim == inputDim)
-                        output_idx += 1
-
-            else:
-                # No axis specified - global reduction, output should be scalar
-                # In many frameworks, scalar outputs are represented as 1D tensors with size 1
-                # or as 0D tensors (empty shape)
-                if outputShapeLen == 0:
-                    # True scalar (0D tensor) - nothing to constrain
-                    pass
-                elif outputShapeLen == 1:
-                    # 1D tensor with size 1 representing scalar
-                    outputDim = tilerModel.getTensorDimVar(tensorName = outputBufferName, dimIdx = 0)
-                    tilerModel.addConstraint(outputDim == 1)
-                else:
-                    # Allow other representations but warn about potential issues
-                    # Some frameworks might represent scalars differently
-                    # For now, just ensure all output dimensions are 1
-                    for idx in range(outputShapeLen):
-                        outputDim = tilerModel.getTensorDimVar(tensorName = outputBufferName, dimIdx = idx)
-                        tilerModel.addConstraint(outputDim == 1)
+            for idx, shapeDim in enumerate(ctxt.lookup(bufferName).shape):
+                tilerModel.addConstraint(tilerModel.getTensorDimVar(tensorName = bufferName, dimIdx = idx) == shapeDim)
 
         return tilerModel
 

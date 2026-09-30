@@ -14,7 +14,15 @@
 #include "testoutputs.h"
 
 // RW: Remove MAINSTACKSIZE because gap9-sdk does not use it
-#define SLAVESTACKSIZE 3800
+// Slave stack size tuned for the Femba-Mambav1 model; the L3 tiling closures run
+// on the controller core (cc_stack), not on these slave stacks.
+#define SLAVESTACKSIZE 768
+
+#define CLUSTER_MAX_CORES 9
+PI_L1 uint8_t cluster_slave_stacks[SLAVESTACKSIZE * CLUSTER_MAX_CORES]
+    __attribute__((aligned(16)));
+#define SET_SLAVE_STACK(t) \
+  do { (t).slave_stack_size = SLAVESTACKSIZE; (t).stacks = cluster_slave_stacks; } while(0)
 
 #ifdef POWER_MEASUREMENT
 unsigned int GPIOs = 89;
@@ -98,6 +106,10 @@ int main(void) {
 
   pi_cluster_conf_init(&conf);
   conf.id = 0;
+#ifndef CC_STACK_SIZE
+#define CC_STACK_SIZE 4096
+#endif
+  conf.cc_stack_size = CC_STACK_SIZE;
   pi_open_from_conf(&cluster_dev, &conf);
   if (pi_cluster_open(&cluster_dev))
     return -1;
@@ -112,7 +124,7 @@ int main(void) {
   struct pi_cluster_task cluster_task;
 
   pi_cluster_task(&cluster_task, InitNetworkWrapper, NULL);
-  cluster_task.slave_stack_size = SLAVESTACKSIZE;
+  SET_SLAVE_STACK(cluster_task);
   pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);
 
 #ifndef CI
@@ -130,7 +142,7 @@ int main(void) {
 #endif
 
   pi_cluster_task(&cluster_task, RunNetworkWrapper, NULL);
-  cluster_task.slave_stack_size = SLAVESTACKSIZE;
+  SET_SLAVE_STACK(cluster_task);
 
 #ifdef POWER_MEASUREMENT
   WRITE_GPIO(1);
@@ -174,7 +186,7 @@ int main(void) {
       float_compare_args.err_count = (int *)&float_error_count;
 
       pi_cluster_task(&cluster_task, CL_CompareFloat, &float_compare_args);
-      cluster_task.slave_stack_size = SLAVESTACKSIZE;
+      SET_SLAVE_STACK(cluster_task);
       pi_cluster_send_task_to_cl(&cluster_dev, &cluster_task);
 
       tot_err += float_error_count;

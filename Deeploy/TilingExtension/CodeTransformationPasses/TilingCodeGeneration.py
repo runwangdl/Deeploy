@@ -100,7 +100,8 @@ class TilingCodeGeneration(CodeTransformationPass, IntrospectiveCodeTransformati
         self.localMemory = localMemory
         self.dma = dma
         self.bufferCount = bufferCount
-        TilingHoistingMixIn.__init__(self, localMemory)
+        constantsMemory = externalMemory if localMemory == "L1" else localMemory
+        TilingHoistingMixIn.__init__(self, localMemory, constantsMemory)
         self.argStructGeneration = ArgumentStructGeneration()
 
     # SCHEREMO: internalPtr refers to the HIGHER memory level of a transfer,
@@ -142,8 +143,8 @@ class TilingCodeGeneration(CodeTransformationPass, IntrospectiveCodeTransformati
                 opReprUpdates[i].append(snippet.operatorRepresentation)
 
         tiledSnippets: List[CodeSnippet] = [
-            CodeSnippet(*self._tileTemplate(ctxt, opReprUpdate, template, tileIdxVar, f"{tensorName}_"))
-            for template, opReprUpdate in zip(templates, opReprUpdates)
+            CodeSnippet(*self._tileTemplate(ctxt, opReprUpdate, template, tileIdxVar, f"{tensorName}_{i}_"))
+            for i, (template, opReprUpdate) in enumerate(zip(templates, opReprUpdates))
         ]
 
         return tiledSnippets

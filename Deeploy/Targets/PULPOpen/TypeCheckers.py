@@ -136,3 +136,68 @@ class PULPMaxPoolChecker(SignPropTypeChecker):
     # Override this. This should compute the signednes of each output node of the Layer
     def checkOutputType(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> bool:
         return True
+
+
+class PULPSoftplusChecker(SignPropTypeChecker):
+
+    def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):
+        super().__init__(input_types, output_types)
+
+    def _inferNumLevels(self, inputs, operatorRepresentation):
+        # Compact256 softplus: int32 Q20 -> int16 Q8.8, range [0, 32767]
+        if inputs[0].nLevels > 65536:
+            return [32768]
+        return [inputs[0].nLevels]
+
+    def _inferSignedness(self, inputs, operatorRepresentation):
+        # Softplus output is always non-negative
+        if inputs[0].nLevels > 65536:
+            return [False]
+        return [inputs[0]._signed]
+
+    def checkOutputType(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> bool:
+        return True
+
+
+class PULPSelectiveScanChecker(SignPropTypeChecker):
+
+    def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):
+        super().__init__(input_types, output_types)
+
+    def _inferNumLevels(self, inputs: List[VariableBuffer],
+                        operatorRepresentation: OperatorRepresentation) -> List[int]:
+        return [inputs[0].nLevels]
+
+    def _inferSignedness(self, inputs: List[VariableBuffer],
+                         operatorRepresentation: OperatorRepresentation) -> List[bool]:
+        if inputs[0]._signed:
+            return [True]
+        else:
+            return [False]
+
+    # Override this. This should compute the signednes of each output node of the Layer
+    def checkOutputType(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> bool:
+
+        return True
+
+
+class PULPSSDScanChecker(SignPropTypeChecker):
+
+    def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):
+        super().__init__(input_types, output_types)
+
+    def _inferNumLevels(self, inputs: List[VariableBuffer],
+                        operatorRepresentation: OperatorRepresentation) -> List[int]:
+        return [inputs[0].nLevels]
+
+    def _inferSignedness(self, inputs: List[VariableBuffer],
+                         operatorRepresentation: OperatorRepresentation) -> List[bool]:
+        if inputs[0]._signed:
+            return [True]
+        else:
+            return [False]
+
+    # Override this. This should compute the signednes of each output node of the Layer
+    def checkOutputType(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> bool:
+
+        return True

@@ -77,6 +77,7 @@ ${data_out}_accumulator += ((${data_in_type.referencedType.typeName} (*)${shapeS
 
 import numpy as np
 
+shift = None
 if (np.log2(reduceLength) - int(np.log2(reduceLength))) == 0:
     shift = int(np.log2(reduceLength))
 %>

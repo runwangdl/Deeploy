@@ -19,8 +19,8 @@ from Deeploy.Targets.Generic.Templates import AddTemplate, ConcatTemplate, Dequa
     GatherTemplate, QuantTemplate, RQSiGELUTemplate, SliceTemplate, iHardswishTemplate
 from Deeploy.Targets.Generic.TypeCheckers import AddChecker, ConcatChecker, ConvChecker, DequantChecker, \
     GatherChecker, GELUChecker, GEMMChecker, HardswishChecker, LayerNormChecker, MatMulChecker, MulChecker, \
-    QuantChecker, ReduceMeanChecker, ReluChecker, ReshapeChecker, RQAddChecker, RQHardswishChecker, SGDChecker, \
-    SliceChecker, SoftmaxChecker, SoftmaxCrossEntropyLossChecker, TransposeChecker
+    QuantChecker, ReduceMeanChecker, ReduceSumChecker, ReluChecker, ReshapeChecker, RQAddChecker, \
+    RQHardswishChecker, SGDChecker, SliceChecker, SoftmaxChecker, SoftmaxCrossEntropyLossChecker, TransposeChecker
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterSynch import PULPSynchCoresPass
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterTiling import PULPClusterTiling
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPL3Tiling import PULPL3Tiling
@@ -32,13 +32,18 @@ from Deeploy.Targets.PULPOpen.DMA.MchanDma import MchanDma
 from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, FloatAddTemplate, FloatConvTemplate, \
     FloatGELUTemplate, FloatGemmTemplate, FloatLayernormTemplate, FloatMatMulTemplate, FloatMaxPoolTemplate, \
     FloatMulTemplate, FloatReduceMeanTemplate, FloatReluTemplate, FloatSoftmaxTemplate, GEMMTemplate, \
-    MatrixVectorTemplate, MaxPoolTemplate, MulTemplate, ReduceMeanTemplate, RequantShiftTemplate, ReshapeTemplate, \
-    RQAddTemplate, RQSiHardswishTemplate, SGDTemplate, SoftmaxCrossEntropyLossTemplate, TallGEMMTemplate, \
-    TransposeTemplate, UniformRequantShiftTemplate, iRMSNormTemplate, iSoftmaxTemplate
+    MatrixVectorTemplate, MaxPoolTemplate, MulTemplate, ReduceMeanTemplate, ReduceSumTemplate, \
+    RequantShiftTemplate, ReshapeTemplate, RQAddTemplate, RQSiHardswishTemplate, SGDTemplate, \
+    SoftmaxCrossEntropyLossTemplate, TallGEMMTemplate, TransposeTemplate, UniformRequantShiftTemplate, \
+    iRMSNormTemplate, iSoftmaxTemplate
 from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker, PULPLinearChecker, PULPMaxPoolChecker, \
     PULPRequantShiftChecker
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingVariableReplacement import TilingVariableReplacement, \
     TilingVariableReplacementUpdate
+from Deeploy.CommonExtensions.DataTypes import int16_t
+from Deeploy.Targets.Generic.TypeCheckers import SILUChecker
+from Deeploy.Targets.PULPOpen.Templates import DequantTemplate, IntAddTemplate, QuantTemplate, SILUTemplate, SelectiveScanTemplate, SliceTemplate, SoftplusTemplate, iLayernormTemplate
+from Deeploy.Targets.PULPOpen.TypeCheckers import PULPSelectiveScanChecker, PULPSoftplusChecker
 
 _clusterEntryClosureCallTemplate = NodeTemplate("""
 // ${closureName} CLOSURE CALL
@@ -168,7 +173,7 @@ PULPSliceBindings = [
             ],
             [PointerClass(float_type)]),
         SliceTemplate.referenceTemplate,
-        ForkTransformer) for float_type in FloatDataTypes for int_type in IntegerDataTypes
+        ForkTransformer) for float_type in (*FloatDataTypes, *IntegerDataTypes) for int_type in IntegerDataTypes
 ]
 
 PULPReshapeBindings = [
@@ -185,6 +190,10 @@ PULPRQAddBindings = [
 ]
 
 PULPAddBindings = [
+    # int32+int32->int32 parallel Add; must precede the scalar binding below (first passing typecheck wins).
+    NodeBinding(AddChecker([PointerClass(int32_t), PointerClass(int32_t)], [PointerClass(int32_t)]),
+                IntAddTemplate.referenceTemplate, ForkTransformer)
+] + [
     NodeBinding(AddChecker([PointerClass(type1), PointerClass(type2)], [PointerClass(int32_t)]),
                 AddTemplate.referenceTemplate, ForkTransformer)
     for type1 in IntegerDataTypes
@@ -300,14 +309,19 @@ PULPDWConv1DBinding = NodeBinding(
          PointerClass(int32_t)], [PointerClass(int8_t)]), ConvTemplate.PULPDWConv1D_8_Template, ForkTransformer)
 
 PULPMatMulBindings = [
+    # NodeBinding(MatMulChecker([PointerClass(int8_t), PointerClass(int8_t)], [PointerClass(int32_t)]),
+    #             GEMMTemplate.PULPMM_8_Template, ClusterTransformer),
     NodeBinding(MatMulChecker([PointerClass(int8_t), PointerClass(int8_t)], [PointerClass(int32_t)]),
-                GEMMTemplate.PULPMM_8_Template, ClusterTransformer)
+                GEMMTemplate.PULPMM_s8_s8_s32_Parallel_Template, ForkTransformer),
 ] + [
     NodeBinding(MatMulChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
                 FloatMatMulTemplate.referenceTemplate, ForkTransformer)
 ]
 
 PULPReduceMeanBindings = [
+    NodeBinding(ReduceMeanChecker([PointerClass(int8_t)], [PointerClass(int32_t)]),
+                ReduceMeanTemplate.S8S32ParallelTemplate, ForkTransformer)
+] + [
     NodeBinding(ReduceMeanChecker([PointerClass(type)], [PointerClass(type)]), ReduceMeanTemplate.referenceTemplate,
                 ClusterTransformer) for type in IntegerDataTypes
 ] + [
@@ -320,6 +334,9 @@ PULPReduceMeanBindings = [
 PULPReduceSumBindings = [
     NodeBinding(ReduceMeanChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
                 FloatReduceSumTemplate.referenceTemplate, ClusterTransformer)
+] + [
+    NodeBinding(ReduceSumChecker([PointerClass(type)], [PointerClass(int32_t)]),
+                ReduceSumTemplate.referenceTemplate, ForkTransformer) for type in SignedIntegerDataTypes
 ]
 
 PULPUniformRQSBindings = [
@@ -461,4 +478,72 @@ BasicDequantBindings = [
 ] + [
     NodeBinding(DequantChecker([PointerClass(int32_t)], [PointerClass(float32_t)]), DequantTemplate.referenceTemplate,
                 ForkTransformer),
+]
+
+
+PULPLayernormBindings = [
+    NodeBinding(
+    LayerNormChecker(
+        [PointerClass(float32_t), PointerClass(float32_t),
+         PointerClass(float32_t)], [PointerClass(float32_t)]), FloatLayernormTemplate.referenceTemplate,
+    ForkTransformer)
+] + [
+    NodeBinding(
+        LayerNormChecker([PointerClass(int8_t), PointerClass(int32_t),
+                          PointerClass(int64_t)], [PointerClass(int8_t)]), iLayernormTemplate.referenceTemplate,
+        ForkTransformer)
+]
+
+
+PULPMatMulS32S8S32Bindings = [
+    NodeBinding(MatMulChecker([PointerClass(int32_t), PointerClass(int8_t)], [PointerClass(int32_t)]),
+                GEMMTemplate.PULPMM_s32_s8_s32_Parallel_Template, ForkTransformer),
+]
+
+
+PULPRQSDWConv1DBindings = [
+    NodeBinding(
+        PULPConvChecker([
+            PointerClass(type1),
+            PointerClass(int8_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t)
+        ], [PointerClass(type2)]), ConvTemplate.PULPDWConv1D_8_Template, ForkTransformer)
+    for type1, type2 in zip([int8_t, int8_t, uint8_t, uint8_t], [int8_t, uint8_t, int8_t, uint8_t])
+]
+
+
+PULPSILUBindings = [
+    NodeBinding(SILUChecker([PointerClass(int8_t)], [PointerClass(type)]), SILUTemplate.referenceTemplate,
+                ForkTransformer) for type in (int8_t, int32_t)
+]
+
+
+PULPSelectiveScanBindings = [
+    NodeBinding(
+        PULPSelectiveScanChecker([
+            PointerClass(int8_t),
+            PointerClass(int8_t),
+            PointerClass(int16_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t)
+        ], [PointerClass(int8_t)]), SelectiveScanTemplate.referenceTemplate, ForkTransformer)
+]
+
+
+PULPSoftplusBindings = [
+    NodeBinding(PULPSoftplusChecker([PointerClass(int8_t)], [PointerClass(int8_t)]), SoftplusTemplate.referenceTemplate,
+                ForkTransformer),
+    NodeBinding(PULPSoftplusChecker([PointerClass(int32_t)], [PointerClass(int16_t)]),
+                SoftplusTemplate.referenceTemplate, ForkTransformer),
+]
+
+
+PULPUniformRQS_s32Bindings = [
+    NodeBinding(
+        PULPRequantShiftChecker([PointerClass(int32_t), PointerClass(int32_t),
+                                 PointerClass(int32_t)], [PointerClass(int32_t)]),
+        UniformRequantShiftTemplate.referenceTemplate, ForkTransformer)
 ]

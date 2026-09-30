@@ -6,7 +6,7 @@ import math
 from typing import Dict, List, Tuple
 
 from Deeploy.AbstractDataTypes import PointerClass
-from Deeploy.CommonExtensions.DataTypes import int8_t
+from Deeploy.CommonExtensions.DataTypes import uint16_t
 from Deeploy.DeeployTypes import NetworkContext, OperatorRepresentation
 from Deeploy.TilingExtension.MemoryConstraints import NodeMemoryConstraint
 from Deeploy.TilingExtension.TileConstraint import TileConstraint
@@ -209,10 +209,11 @@ class MatMulTileConstraint(TileConstraint):
         replacements["N"] = [NSize] * len(outputCubes)
 
         replacementTypes = {
-            "M": PointerClass(int8_t),
-            "N": PointerClass(int8_t),
-            "O": PointerClass(int8_t),
-            "batch": PointerClass(int8_t)
+            # uint16_t: tile dims can exceed 255 (e.g. O=292); int8_t/uint8_t would wrap.
+            "M": PointerClass(uint16_t),
+            "N": PointerClass(uint16_t),
+            "O": PointerClass(uint16_t),
+            "batch": PointerClass(uint16_t)
         }
 
         # Update load schedule lists
@@ -227,3 +228,23 @@ class MatMulTileConstraint(TileConstraint):
         schedule = TilingSchedule(inputBaseOffsets, outputBaseOffsets, inputLoadSchedule, outputLoadSchedule)
 
         return VariableReplacementScheme(replacements, replacementTypes), schedule
+
+
+class MatMulTileConstraintMinM(MatMulTileConstraint):
+    # Steers the solver away from the alternating large/tiny tile pattern seen in theSSM state-projection MatMuls, 
+
+    MIN_M_TILE = 32
+
+    @staticmethod
+    def addPolicyConstraint(tilerModel: TilerModel, parseDict: Dict, ctxt: NetworkContext) -> TilerModel:
+        tilerModel = MatMulTileConstraint.addPolicyConstraint(tilerModel, parseDict, ctxt)
+
+        bufferA = ctxt.lookup(name = parseDict['A'])
+        tensorsShapeLenA = len(bufferA.shape)
+        AMatrixFirstDimVar = tilerModel.getTensorDimVar(tensorName = bufferA.name,
+                                                        dimIdx = (tensorsShapeLenA - 2) + parseDict['transA'])
+
+        if parseDict['M'] > MatMulTileConstraintMinM.MIN_M_TILE:
+            tilerModel.addMinTileSizeConstraint(parseDict, 'M', AMatrixFirstDimVar, MatMulTileConstraintMinM.MIN_M_TILE)
+
+        return tilerModel

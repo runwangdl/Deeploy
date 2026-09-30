@@ -33,4 +33,10 @@ void UniformRequantShift_s32_s8(int32_t *data_in, int32_t size, int32_t mul,
                                 int32_t output_offset, int8_t output_min,
                                 int8_t output_max, bool rounding);
 
+void UniformRequantShift_s32_s32(int32_t *data_in, int32_t size, int32_t mul,
+                                 int32_t add, int32_t *data_out, int32_t log2D,
+                                 int32_t HW, int32_t input_offset,
+                                 int32_t output_offset, int32_t output_min,
+                                 int32_t output_max, bool rounding);
+
 #endif // __DEEPLOY_MATH_UNIFORMREQUANTSHIFT_KERNEL_HEADER_

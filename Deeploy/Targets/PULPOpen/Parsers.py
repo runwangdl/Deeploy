@@ -3,11 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import math
+import numpy as np
 from typing import Tuple
 
 import onnx_graphsurgeon as gs
 
-from Deeploy.DeeployTypes import NetworkContext
+from Deeploy.AbstractDataTypes import PointerClass
+from Deeploy.CommonExtensions.DataTypes import int32_t
+from Deeploy.DeeployTypes import NetworkContext, NodeParser
 from Deeploy.Targets.Generic.Parsers import Conv2DParser, GEMMParser, ReduceMeanParser, RQSConv1DParser, \
     RQSConv2DParser, RQSParserInterface
 
@@ -193,7 +196,7 @@ class PULPDWConv1DParser(RQSConv1DParser):
         if wellFormed:
             ret = all([
                 # Make sure padding is square
-                self.operatorRepresentation['pads'][0] == self.operatorRepresentation['pads'][1],
+                #self.operatorRepresentation['pads'][0] == self.operatorRepresentation['pads'][1],
                 #self.operatorRepresentation['pads'][0] == 0,
                 # Don't support dilations
                 #all([coeff == 1 for coeff in self.operatorRepresentation['dilations']]),
@@ -233,6 +236,18 @@ class PULPDWConv1DParser(RQSConv1DParser):
             if not self.operatorRepresentation['group'] == newCtxt.lookup(
                     self.operatorRepresentation['weight']).shape[0]:
                 return ctxt, False
+
+            # Input stays NCHW (only output is transposed); override base-parser dim reads accordingly.
+            data_in = newCtxt.lookup(self.operatorRepresentation['data_in'])
+            data_out = newCtxt.lookup(self.operatorRepresentation['data_out'])
+            self.operatorRepresentation['ch_im_in'] = data_in.shape[1]
+            self.operatorRepresentation['dim_im_in_y'] = data_in.shape[2]
+            if channels_first:
+                self.operatorRepresentation['ch_im_out'] = data_out.shape[1]
+                self.operatorRepresentation['dim_im_out_y'] = data_out.shape[2]
+            else:
+                self.operatorRepresentation['ch_im_out'] = data_out.shape[2]
+                self.operatorRepresentation['dim_im_out_y'] = data_out.shape[1]
 
             # if not newCtxt.is_global(self.operatorRepresentation['weight']):
             #     return ctxt, False
@@ -481,6 +496,183 @@ class PULPReduceMeanParser(ReduceMeanParser):
             for ax in range(len(originalInputShape)):
                 if ax not in reducedAxes:
                     self.operatorRepresentation['dim_in_' + str(ax)] = originalInputShape[ax]
+
+            return newCtxt, True
+        else:
+            return ctxt, False
+
+
+class PULPSoftplusParser(NodeParser):
+
+    def __init__(self):
+        super().__init__()
+
+    def parseNode(self, node: gs.Node) -> bool:
+        ret = all([
+            node.op == 'Softplus',
+            len(node.inputs) == 1,
+            len(node.outputs) == 1,
+        ])
+        return ret
+
+    def parseNodeCtxt(self,
+                      ctxt: NetworkContext,
+                      node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+
+        data_in = ctxt.lookup(node.inputs[0].name)
+        data_out = ctxt.lookup(node.outputs[0].name)
+        self.operatorRepresentation['data_in'] = data_in.name
+        self.operatorRepresentation['data_out'] = data_out.name
+        self.operatorRepresentation['size'] = int(np.prod(data_in.shape))
+
+        return ctxt, True
+
+
+class PULPSelectiveScanParser(NodeParser):
+
+    def __init__(self):
+        super().__init__()
+
+    def parseNode(self, node: gs.Node) -> bool:
+        ret = all([
+            node.op == 'SelectiveScan',
+            len(node.inputs) == 7,
+            len(node.outputs) == 1,
+        ])
+        if ret:
+            self.operatorRepresentation['batch_size'] = int(node.attrs['batch'])
+            if 'seq_len' in node.attrs:
+                self.operatorRepresentation['seq_len'] = int(node.attrs['seq_len'])
+            if 'd_inner' in node.attrs:
+                self.operatorRepresentation['d_inner'] = int(node.attrs['d_inner'])
+            if 'd_state' in node.attrs:
+                self.operatorRepresentation['d_state'] = int(node.attrs['d_state'])
+            if 'output_requant_mul_q40' in node.attrs:
+                self.operatorRepresentation['output_requant_mul_q40'] = int(node.attrs['output_requant_mul_q40'])
+            if 'gate_z_scale' in node.attrs:
+                self.operatorRepresentation['gate_z_scale'] = float(node.attrs['gate_z_scale'])
+
+        return ret
+
+    def parseNodeCtxt(self,
+                      ctxt: NetworkContext,
+                      node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+
+        newCtxt, ret = super().parseNodeCtxt(ctxt, node, channels_first)
+
+        if ret:
+            # ONNX input order matches [x, z, dt, B, C, A, D_skip]
+            inputs = ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip']
+            outputs = ['y']
+
+            for idx, inputNode in enumerate(node.inputs):
+                self.operatorRepresentation[inputs[idx]] = newCtxt.lookup(inputNode.name).name
+
+            for idx, outputNode in enumerate(node.outputs):
+                self.operatorRepresentation[outputs[idx]] = newCtxt.lookup(outputNode.name).name
+
+            # Precompute 256-entry SiLU gate LUT (int32 Q13) at compile time; stored as L2 ConstantBuffer.
+            gate_z_scale = self.operatorRepresentation['gate_z_scale']
+            lut_name = node.name + '_gate_lut'
+
+            if lut_name not in newCtxt.globalObjects:
+                indices = np.arange(256, dtype=np.float64)
+                z_d     = (indices - 128.0) * gate_z_scale
+                z_clip  = np.clip(z_d, -20.0, 20.0)
+                sig     = 1.0 / (1.0 + np.exp(-z_clip))
+                q20     = np.round(z_d * sig * float(1 << 20)).astype(np.int64)
+                q13     = np.where(q20 >= 0, (q20 + 64) >> 7, -((-q20 + 64) >> 7))
+                lut_values = q13.astype(np.int32)
+
+                gate_lut_buf = newCtxt.ConstantBuffer(lut_name, [256], lut_values)
+                newCtxt.add(gate_lut_buf, ctxt='global')
+                newCtxt.annotateType(lut_name, PointerClass(int32_t))
+                gate_lut_buf._memoryLevel = "L2"
+
+            self.operatorRepresentation['gate_lut'] = lut_name
+
+            return newCtxt, True
+        else:
+            return ctxt, False
+
+
+class PULPSSDScanParser(NodeParser):
+
+    def __init__(self):
+        super().__init__()
+
+    def parseNode(self, node: gs.Node) -> bool:
+        ret = all([
+            node.op == 'SSD_Scan',
+            len(node.inputs) == 7,
+            len(node.outputs) == 1,
+            'n_groups' in node.attrs and int(node.attrs['n_groups']) == 1,
+        ])
+        if ret:
+            self.operatorRepresentation['batch_size'] = int(node.attrs['batch_size'])
+            if 'seq_len' in node.attrs:
+                self.operatorRepresentation['seq_len'] = int(node.attrs['seq_len'])
+            if 'chunk_size' in node.attrs:
+                self.operatorRepresentation['chunk_size'] = int(node.attrs['chunk_size'])
+            if 'd_state' in node.attrs:
+                self.operatorRepresentation['d_state'] = int(node.attrs['d_state'])
+            if 'head_dim' in node.attrs:
+                self.operatorRepresentation['head_dim'] = int(node.attrs['head_dim'])
+            if 'n_groups' in node.attrs:
+                self.operatorRepresentation['n_groups'] = int(node.attrs['n_groups'])
+            if 'n_heads' in node.attrs:
+                self.operatorRepresentation['n_heads'] = int(node.attrs['n_heads'])
+
+            # d_inner = n_heads * head_dim (matches x/y's last dimension)
+            if 'head_dim' in self.operatorRepresentation and 'n_heads' in self.operatorRepresentation:
+                self.operatorRepresentation['d_inner'] = (self.operatorRepresentation['head_dim'] *
+                                                          self.operatorRepresentation['n_heads'])
+
+            if 'gate_z_scale' in node.attrs:
+                self.operatorRepresentation['gate_z_scale'] = float(node.attrs['gate_z_scale'])
+            self.operatorRepresentation['output_requant_mul_q40'] = int(node.attrs['output_requant_mul_q40'])
+
+        return ret
+
+    def parseNodeCtxt(self,
+                      ctxt: NetworkContext,
+                      node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+
+        newCtxt, ret = super().parseNodeCtxt(ctxt, node, channels_first)
+
+        if ret:
+            # ONNX input order matches [x, z, dt, B, C, A, D_skip]
+            inputs = ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip']
+            outputs = ['y']
+
+            for idx, inputNode in enumerate(node.inputs):
+                self.operatorRepresentation[inputs[idx]] = newCtxt.lookup(inputNode.name).name
+
+            for idx, outputNode in enumerate(node.outputs):
+                self.operatorRepresentation[outputs[idx]] = newCtxt.lookup(outputNode.name).name
+
+            # Precompute 256-entry SiLU gate LUT (int32 Q13) at compile time; stored as L2 ConstantBuffer.
+            gate_z_scale = self.operatorRepresentation['gate_z_scale']
+            lut_name = node.name + '_gate_lut'
+
+            if lut_name not in newCtxt.globalObjects:
+                indices = np.arange(256, dtype=np.float64)
+                z_d = (indices - 128.0) * gate_z_scale
+                z_clip = np.clip(z_d, -20.0, 20.0)
+                sig = 1.0 / (1.0 + np.exp(-z_clip))
+                q20 = np.round(z_d * sig * float(1 << 20)).astype(np.int64)
+                q13 = np.where(q20 >= 0, (q20 + 64) >> 7, -((-q20 + 64) >> 7))
+                lut_values = q13.astype(np.int32)
+
+                gate_lut_buf = newCtxt.ConstantBuffer(lut_name, [256], lut_values)
+                newCtxt.add(gate_lut_buf, ctxt='global')
+                newCtxt.annotateType(lut_name, PointerClass(int32_t))
+                gate_lut_buf._memoryLevel = "L2"
+
+            self.operatorRepresentation['gate_lut'] = lut_name
 
             return newCtxt, True
         else:
