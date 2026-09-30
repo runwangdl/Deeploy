@@ -13,7 +13,8 @@ from Deeploy.TilingExtension.CodeTransformationPasses.TilingHoistingMixIn import
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingPrototypes import ProfilingPrototypeMixIn, \
     PrototypeTilingMixIn, TilingMetaInfo
 from Deeploy.TilingExtension.MemoryConstraints import NodeMemoryConstraint, TensorMemoryConstraint
-from Deeploy.TilingExtension.TilingCodegen import HyperRectangle, TilingSchedule, VariableReplacementScheme
+from Deeploy.TilingExtension.TilingCodegen import HyperRectangle, TilingSchedule, VariableReplacementScheme, \
+    calculateFlatOffset, stridesFromShape
 
 
 class SingleBufferingTilingCodeGeneration(TilingCodeGeneration):
@@ -43,10 +44,13 @@ class SingleBufferingTilingCodeGeneration(TilingCodeGeneration):
                                                                       localBuffer._type.referencedType.typeWidth,
                                                                       self.isFinalMemoryLevel(tensorMemoryConstraint))
 
+            initialOffset = calculateFlatOffset(rectangles[0].offset, stridesFromShape(externalBufferShape))
+
             externalBufferRef = self._hoistReference(ctxt,
                                                      externalBuffer.name + "_ref",
                                                      externalBuffer,
                                                      shape = externalBufferShape,
+                                                     offset = initialOffset,
                                                      override_type = VoidType)
 
             future = self.dma.getFuture(tensorName, direction)

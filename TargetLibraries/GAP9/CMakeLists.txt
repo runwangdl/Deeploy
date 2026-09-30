@@ -22,8 +22,11 @@ endif()
 list(FILTER SOURCES EXCLUDE REGEX ".*dory_(mem|dma).*")
 
 # RW: Include PULPOpen sources but exclude dory_mem related files
+# RW: Include PULPOpen sources but exclude dory_mem related files and
+# SelectiveScan (GAP9 has its own GAP9-specific implementation).
 file(GLOB_RECURSE PULPOPEN_SOURCES "../PULPOpen/src/**")
 list(FILTER PULPOPEN_SOURCES EXCLUDE REGEX ".*dory_mem.*")
+list(FILTER PULPOPEN_SOURCES EXCLUDE REGEX ".*SelectiveScan.*")
 list(APPEND SOURCES ${PULPOPEN_SOURCES})
 
 # Separate dory library compiled without -O3
@@ -77,6 +80,27 @@ target_compile_options(deeploygap9 PRIVATE
   -Wno-incompatible-pointer-types
   -O3
 )
+
+target_link_libraries(deeploygap9 PUBLIC pmsis)
+
+# Compile the hot forward kernels at -O3 (set last so it wins over the SDK's
+# default -Os). Identified via Perfetto traces on Femba/Original: SelectiveScan
+# (~42% wall time), large GEMMs (~27%), DT-RQ (~14%), ConvRQ (~4%), SILU (~1%).
+# pulp_nn_{linear,conv,depthwise,add}_i8_i8_i8 live in the prebuilt
+# pulp-nn-mixed library and cannot be flagged here.
+set(_KERNEL_O3_FILES
+  ${CMAKE_CURRENT_LIST_DIR}/src/SelectiveScan.c
+  ${CMAKE_CURRENT_LIST_DIR}/src/SSDScan.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/gemv.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Matmul.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/SILU_s8.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Layernorm.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Softplus.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/UniformRequantShift.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Dequant.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Quant.c
+)
+set_source_files_properties(${_KERNEL_O3_FILES} PROPERTIES COMPILE_OPTIONS "-O3")
 
 #RW: Link PULP-NN
 #RW: Set PULP-NN version and bitwidth for pulp-nn-mixed

@@ -14,7 +14,8 @@ from Deeploy.TilingExtension.CodeTransformationPasses.TilingHoistingMixIn import
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingPrototypes import ProfilingPrototypeMixIn, \
     PrototypeTilingMixIn, TilingMetaInfo
 from Deeploy.TilingExtension.MemoryConstraints import NodeMemoryConstraint
-from Deeploy.TilingExtension.TilingCodegen import TilingSchedule, VariableReplacementScheme, stridesFromShape
+from Deeploy.TilingExtension.TilingCodegen import TilingSchedule, VariableReplacementScheme, calculateFlatOffset, \
+    stridesFromShape
 
 
 class DoubleBufferingTilingCodeGeneration(TilingCodeGeneration):
@@ -128,10 +129,13 @@ class DoubleBufferingTilingCodeGeneration(TilingCodeGeneration):
                                                                       localBuffer._type.referencedType.typeWidth,
                                                                       self.isFinalMemoryLevel(tensorMemoryConstraint))
 
+            initialOffset = calculateFlatOffset(rectangles[0].offset, stridesFromShape(externalBufferShape))
+
             externalBufferRef = self._hoistReference(ctxt,
                                                      externalBuffer.name + "_ref",
                                                      externalBuffer,
                                                      externalBufferShape,
+                                                     offset = initialOffset,
                                                      override_type = VoidType)
 
             tensorMemoryConstraint = nodeMemoryConstraint.inputTensorMemoryConstraints[externalBuffer.name]
@@ -218,10 +222,13 @@ class DoubleBufferingTilingCodeGeneration(TilingCodeGeneration):
                                                                       localBuffer._type.referencedType.typeWidth,
                                                                       self.isFinalMemoryLevel(tensorMemoryConstraint))
 
+            initialOffset = calculateFlatOffset(rectangles[0].offset, stridesFromShape(externalBufferShape))
+
             externalBufferRef = self._hoistReference(ctxt,
                                                      externalBuffer.name + "_ref",
                                                      externalBuffer,
                                                      externalBufferShape,
+                                                     offset = initialOffset,
                                                      override_type = VoidType)
 
             tensorMemoryConstraint = nodeMemoryConstraint.outputTensorMemoryConstraints[externalBuffer.name]

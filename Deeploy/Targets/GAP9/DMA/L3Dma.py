@@ -6,7 +6,8 @@ import math
 from typing import Dict, Tuple
 
 from Deeploy.DeeployTypes import NetworkContext, NodeTemplate, OperatorRepresentation, VariableBuffer
-from Deeploy.TilingExtension.AsyncDma import AsyncDma, DmaDirection, Future, PerTensorWaitingStrategy
+from Deeploy.TilingExtension.AsyncDma import AsyncDma, BlockingDmaFromAsyncDmaAdapter, DmaDirection, \
+    Future, PerTensorWaitingStrategy
 
 
 class GAP9L3DmaFuture(Future):
@@ -20,6 +21,7 @@ class GAP9L3DmaFuture(Future):
     _waitTemplate = NodeTemplate("""
     if (${name}.size != 0) {
         pi_cl_ram_copy_wait(&${name});
+        ${name}.size = 0;
     }""")
 
 
@@ -57,3 +59,10 @@ class GAP9L3Dma(AsyncDma):
             "stride": strideExt[0],
         })
         return operatorRepresentation
+
+
+# Blocking adapter for L3 DMA. Used as the single-buffer path in PULPL3Tiling:
+# SB blocks on each transfer, DB uses the async GAP9L3Dma above so the L3<->L2
+# prefetch overlaps the previous tile's compute. Filippo Cordella measured the
+# DMA overlap as the whole of the 127 M-cycle Siracusa/GAP9 gap on full FEMBA.
+gap9L3DmaHack = BlockingDmaFromAsyncDmaAdapter(GAP9L3Dma())

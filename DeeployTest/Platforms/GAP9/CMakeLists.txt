@@ -31,6 +31,10 @@ endif()
 
 if(SLAVESTACKSIZE)
   target_compile_definitions(${ProjectId} PRIVATE SLAVESTACKSIZE=${SLAVESTACKSIZE})
+# L1-memory knob - size the cluster-controller (CC / master) stack from the build.
+# Example (CI / command line): cmake ... -DCC_STACK_SIZE=8192  (see deeploytest.c).
+if(CC_STACK_SIZE)
+  target_compile_definitions(${ProjectId} PRIVATE CC_STACK_SIZE=${CC_STACK_SIZE})
 endif()
 
 # RW: Waive sign comparison warnings from pulp_nn_utils.h

@@ -8,6 +8,8 @@ from typing import Tuple
 import numpy as np
 import onnx_graphsurgeon as gs
 
+from Deeploy.AbstractDataTypes import PointerClass
+from Deeploy.CommonExtensions.DataTypes import int8_t
 from Deeploy.DeeployTypes import ConstantBuffer, NetworkContext, NodeParser, VariableBuffer
 
 
@@ -169,10 +171,17 @@ class SliceParser(NodeParser):
             ctxt.hoistConstant(axesTensor)
             node.inputs.append(axesTensor)
         if len(node.inputs) <= 4:
-            values = np.ones((self.operatorRepresentation['dims']))
+            values = np.ones((self.operatorRepresentation['dims']), dtype = np.int64)
             stepsTensor = gs.Constant(f'{node.name}_Steps_Tensor', values = values)
             ctxt.hoistConstant(stepsTensor)
             node.inputs.append(stepsTensor)
+
+        # Register pre-populated constant inputs 1-4 (e.g. from SplitToSlicePass).
+        for i in range(1, 5):
+            inp = node.inputs[i]
+            if isinstance(inp, gs.Constant) and not ctxt.is_global(inp.name):
+                ctxt.hoistConstant(inp)
+            ctxt.addUser(node.inputs[i].name, node)
 
         self.operatorRepresentation['starts'] = node.inputs[1].name
         self.operatorRepresentation['ends'] = node.inputs[2].name
@@ -676,6 +685,54 @@ class ReduceSumParser(ReduceParser):
 
         newCtxt, ret = super().parseNodeCtxt(ctxt, node, channels_first)
         return newCtxt, ret
+
+
+class SILUParser(NodeParser):
+
+    def __init__(self):
+        super().__init__()
+
+    def parseNode(self, node: gs.Node) -> bool:
+
+        ret = all([len(node.inputs) >= 1, len(node.outputs) == 1])
+        return ret
+
+    def parseNodeCtxt(self,
+                      ctxt: NetworkContext,
+                      node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+
+        data_in = ctxt.lookup(node.inputs[0].name)
+        data_out = ctxt.lookup(node.outputs[0].name)
+        self.operatorRepresentation['data_in'] = data_in.name
+        self.operatorRepresentation['data_out'] = data_out.name
+        self.operatorRepresentation['size'] = np.prod(data_in.shape)
+        if "scales" in node.attrs:
+            self.operatorRepresentation['scales'] = node.attrs['scales']
+
+            scales = node.attrs['scales']
+            scale_in = float(scales[0])
+            scale_out = float(scales[1])
+
+            lut_name = node.name + '_silu_lut'
+            if lut_name not in ctxt.globalObjects:
+                indices = np.arange(256, dtype=np.float64)
+                x_int8 = indices - 128.0
+                x_fp32 = x_int8 * scale_in
+                sigmoid_x = 1.0 / (1.0 + np.exp(-np.clip(x_fp32, -88.0, 88.0)))
+                y_fp32 = x_fp32 * sigmoid_x
+                y_int = np.round(y_fp32 / scale_out).astype(np.int64)
+                y_int = np.clip(y_int, -128, 127)
+                lut_values = y_int.astype(np.int8)
+
+                silu_lut_buf = ctxt.ConstantBuffer(lut_name, [256], lut_values)
+                ctxt.add(silu_lut_buf, ctxt='global')
+                ctxt.annotateType(lut_name, PointerClass(int8_t))
+                silu_lut_buf._memoryLevel = "L2"
+
+            self.operatorRepresentation['silu_lut'] = lut_name
+
+        return ctxt, True
 
 
 class SoftmaxParser(NodeParser):
@@ -1691,6 +1748,7 @@ class iLayerNormParser(NodeParser):
         if ret:
             self.operatorRepresentation['n_levels'] = int(self._unpack_const(node.attrs['n_levels']))
             self.operatorRepresentation['log2D'] = int(math.log2(self._unpack_const(node.attrs['D'])))
+            self.operatorRepresentation['bias_shift'] = int(self._unpack_const(node.attrs['bias_shift'])) if 'bias_shift' in node.attrs else 0
 
         return ret
 

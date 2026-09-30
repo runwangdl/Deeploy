@@ -31,7 +31,8 @@ class _ArgStructAllocateTemplate(NodeTemplate):
 
 _stackAllocateTemplate = partial(
     _ArgStructAllocateTemplate,
-    templateStr = "${structDict.typeName} ${name} = (${structDict.typeName}) ${str(structDict)};")
+    
+    templateStr = "static ${structDict.typeName} ${name}; ${name} = (${structDict.typeName}) ${str(structDict)};")
 
 
 class ArgumentStructGeneration(CodeTransformationPass, IntrospectiveCodeTransformationMixIn):

@@ -51,7 +51,7 @@ class SliceTileConstraint(TileConstraint):
                 axIndex = list(sliceAxes).index(idx)
                 axStep = sliceSteps[axIndex]
 
-                tilerModel.addConstraint(inputDimensionVar == ((outputDimensionVar - 1) * axStep + 1))
+                tilerModel.addConstraint(inputDimensionVar == ((outputDimensionVar - 1) * abs(axStep) + 1))
             else:
                 # Otherwise, input and output dimensions need to be equal
                 tilerModel.addConstraint(outputDimensionVar == inputDimensionVar)
@@ -67,16 +67,8 @@ class SliceTileConstraint(TileConstraint):
 
     @staticmethod
     def computeInputCubeFromOutputCube(outputCube: AbsoluteHyperRectangle, parseDict: Dict) -> HyperRectangle:
-        # Computes the input cube given the output cube and the slicing parameters.
-        #
-        # Will provide a minimal input cube, that only requires the data needed for the output cube
-        # by ignoring the input data that is outside of the slicing scope,
-        # as given by the slicing starting and ending parameters.
-        #
-        # (It will start with the first element required for the output cube,
-        # and will end with the last element required for the output cube).
-        #
-        # *Function is ready for multiple axes slicing.
+        # Minimal input cube for the output cube: only the data within the slicing scope
+        # (start/end), from the first to the last element required. Supports multiple axes.
 
         # Start from the output cube dimensions and offsets
         in_cube_dims = list(outputCube.dims).copy()
@@ -88,9 +80,12 @@ class SliceTileConstraint(TileConstraint):
             start = parseDict['starts'][idx]
             step = parseDict['steps'][idx]
 
-            # Compute input cube parameters for the current axis
-            in_cube_dims[ax] = (outputCube.dims[ax] - 1) * step + 1
+            # Compute input cube parameters for the current axis.
+            # For negative steps the contiguous DMA block is anchored at its lowest index.
+            in_cube_dims[ax] = (outputCube.dims[ax] - 1) * abs(step) + 1
             in_cube_offset[ax] = start + outputCube.offset[ax] * step
+            if step < 0:
+                in_cube_offset[ax] -= (in_cube_dims[ax] - 1)
 
         return HyperRectangle(offset = tuple(in_cube_offset), dims = tuple(in_cube_dims))
 

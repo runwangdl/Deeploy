@@ -111,6 +111,15 @@ class RQSiHardswishLayer(iHardswishLayer):
         super().__init__(maps)
 
 
+class SILULayer(ONNXLayer):
+
+    def __init__(self, maps: List[NodeMapper]):
+        super().__init__(maps)
+
+    def computeOps(self):
+        return 0
+
+
 class SoftmaxLayer(ONNXLayer):
 
     def __init__(self, maps: List[NodeMapper]):
@@ -164,14 +173,19 @@ class RequantShiftLayer(ONNXLayer):
     def computeShapes(self, inputShapes: List[Shape], outputShapes: Shape, operatorRepresentation,
                       channels_first) -> Tuple[Shape, Shape]:
 
-        channel_dim = inputShapes[0][1]
-        inputShapes[2] = [inputShapes[0][0], channel_dim] + list(inputShapes[2][1:])
-        inputShapes[1] = [inputShapes[0][0], channel_dim] + list(inputShapes[1][1:])
+        # For channels_first=False (NHWC/NHSC), channels are at the last dimension.
+        if channels_first:
+            channel_dim = inputShapes[0][1]
+        else:
+            channel_dim = inputShapes[0][-1]
+
+        inputShapes[2] = [inputShapes[0][0], channel_dim]
+        inputShapes[1] = [inputShapes[0][0], channel_dim]
 
         return (inputShapes, outputShapes)
 
     def computeOps(self):
-        return self.mapper.parser.operatorRepresentation['size'] * 3  # One add, one mul, one div
+        return self.mapper.parser.operatorRepresentation['size'] * 3
 
 
 class AddLayer(SingleOperationPerElementLayer):

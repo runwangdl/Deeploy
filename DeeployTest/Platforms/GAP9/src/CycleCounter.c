@@ -8,7 +8,7 @@
 #include "pmsis.h"
 
 void ResetTimer() {
-  pi_perf_conf(1 << PI_PERF_CYCLES);
+  pi_perf_conf((1 << PI_PERF_CYCLES) | (1 << PI_PERF_INSTR));
   pi_perf_reset();
 }
 

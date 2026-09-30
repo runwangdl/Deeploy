@@ -14,11 +14,11 @@ from Deeploy.AbstractDataTypes import PointerClass
 from Deeploy.CommonExtensions.CodeTransformationPasses.MemoryAllocation import ArgumentStructGeneration, \
     MemoryManagementGeneration, MemoryPassthroughGeneration
 from Deeploy.CommonExtensions.DataTypes import FloatDataTypes, IntegerDataTypes, SignedIntegerDataTypes, float32_t, \
-    int8_t, int32_t, int64_t, uint8_t
+    int8_t, int16_t, int32_t, int64_t, uint8_t
 from Deeploy.DeeployTypes import CodeTransformation, NodeBinding
 from Deeploy.FutureExtension.Bindings.AutoFutureBinding import AutoFutureBinding
 from Deeploy.FutureExtension.CodeTransformationPasses.FutureCodeTransformation import FutureGeneration
-from Deeploy.Targets.GAP9.DMA.L3Dma import GAP9L3Dma
+from Deeploy.Targets.GAP9.DMA.L3Dma import GAP9L3Dma, gap9L3DmaHack
 from Deeploy.Targets.GAP9.DMA.MchanDma import GAP9MchanDma
 from Deeploy.Targets.GAP9.Templates import GAP9SDKDequantQuantTemplate, NE16GEMMTemplate
 # Import templates from PULPOpen and Generic
@@ -26,8 +26,9 @@ from Deeploy.Targets.Generic.Templates import AddTemplate, ConcatTemplate, Dequa
     FloatReduceSumTemplate, GatherTemplate, RQSiGELUTemplate, SliceTemplate, iHardswishTemplate
 from Deeploy.Targets.Generic.TypeCheckers import AddChecker, ConcatChecker, ConvChecker, DequantChecker, \
     GatherChecker, GELUChecker, GEMMChecker, HardswishChecker, LayerNormChecker, MatMulChecker, MulChecker, \
-    QuantChecker, ReduceMeanChecker, ReluChecker, ReshapeChecker, RQAddChecker, RQHardswishChecker, SGDChecker, \
-    SliceChecker, SoftmaxChecker, SoftmaxCrossEntropyLossChecker, TransposeChecker
+    QuantChecker, ReduceMeanChecker, ReduceSumChecker, ReluChecker, ReshapeChecker, RQAddChecker, \
+    RQHardswishChecker, SGDChecker, SILUChecker, SliceChecker, SoftmaxChecker, SoftmaxCrossEntropyLossChecker, \
+    TransposeChecker
 from Deeploy.Targets.PULPOpen.Bindings import ForkClosure, L3MemoryAwareFunctionCallClosure, \
     MemoryAwareForkTransformer, MemoryAwareFunctionCallClosure, TilingCallClosure
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterSynch import PULPSynchCoresPass
@@ -35,14 +36,19 @@ from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterTiling import 
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPL3Tiling import PULPL3Tiling
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPProfileUntiled import PULPProfileUntiled
 from Deeploy.Targets.PULPOpen.DataTypes import PULPDMAFuture
+from Deeploy.Targets.GAP9.Templates import SelectiveScanTemplate, SSDScanTemplate
 from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, FloatAddTemplate, FloatConvTemplate, \
+    IntAddTemplate, \
     FloatGELUTemplate, FloatGemmTemplate, FloatLayernormTemplate, FloatMatMulTemplate, FloatMaxPoolTemplate, \
-    FloatMulTemplate, FloatReluTemplate, FloatSoftmaxTemplate, GEMMTemplate, MatrixVectorTemplate, MaxPoolTemplate, \
-    MulTemplate, ReduceMeanTemplate, RequantShiftTemplate, ReshapeTemplate, RQAddTemplate, RQSiHardswishTemplate, \
-    SGDTemplate, SoftmaxCrossEntropyLossTemplate, TallGEMMTemplate, TransposeTemplate, UniformRequantShiftTemplate, \
-    iRMSNormTemplate, iSoftmaxTemplate
+    FloatMulTemplate, FloatReduceMeanTemplate, FloatReluTemplate, FloatSoftmaxTemplate, GEMMTemplate, \
+    MatrixVectorTemplate, MaxPoolTemplate, \
+    MulTemplate, ReduceMeanTemplate, ReduceSumTemplate, RequantShiftTemplate, ReshapeTemplate, RQAddTemplate, \
+    RQSiHardswishTemplate, \
+    SGDTemplate, SILUTemplate, SliceTemplate, SoftmaxCrossEntropyLossTemplate, SoftplusTemplate, TallGEMMTemplate, \
+    TransposeTemplate, UniformRequantShiftTemplate, iRMSNormTemplate, iSoftmaxTemplate, iLayernormTemplate, \
+    QuantTemplate, DequantTemplate
 from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker, PULPLinearChecker, PULPMaxPoolChecker, \
-    PULPRequantShiftChecker
+    PULPRequantShiftChecker, PULPSelectiveScanChecker, PULPSoftplusChecker, PULPSSDScanChecker
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingVariableReplacement import TilingVariableReplacement, \
     TilingVariableReplacementUpdate
 
@@ -58,7 +64,8 @@ GAP9Transformer = CodeTransformation([
     MemoryManagementGeneration("L1"),
     TilingVariableReplacement("L2"),
     MemoryAwareFunctionCallClosure(writeback = False, generateStruct = True),
-    PULPL3Tiling("L3", "L2", GAP9L3Dma()),  # Use GAP9-specific L3 DMA
+    # SB uses blocking gap9L3DmaHack; DB uses async GAP9L3Dma so L3<->L2 prefetch overlaps the previous tile's compute.
+    PULPL3Tiling("L3", "L2", gap9L3DmaHack, dbDma = GAP9L3Dma()),  # Use GAP9-specific L3 DMA
     PULPProfileUntiled(),
     ArgumentStructGeneration(),
     L3MemoryAwareFunctionCallClosure(writeback = False),
@@ -77,7 +84,8 @@ GAP9ClusterTransformer = CodeTransformation([
     MemoryManagementGeneration("L1"),
     TilingVariableReplacement("L2"),
     MemoryAwareFunctionCallClosure(writeback = False, generateStruct = True),
-    PULPL3Tiling("L3", "L2", GAP9L3Dma()),  # Use GAP9-specific L3 DMA
+    # SB uses blocking gap9L3DmaHack; DB uses async GAP9L3Dma so L3<->L2 prefetch overlaps the previous tile's compute.
+    PULPL3Tiling("L3", "L2", gap9L3DmaHack, dbDma = GAP9L3Dma()),  # Use GAP9-specific L3 DMA
     PULPProfileUntiled(),
     ArgumentStructGeneration(),
     L3MemoryAwareFunctionCallClosure(writeback = False),
@@ -126,6 +134,15 @@ GAP9SliceBindings = [
             PointerClass(uint8_t),
             PointerClass(uint8_t)
         ], [PointerClass(type)]), SliceTemplate.referenceTemplate, GAP9Transformer) for type in FloatDataTypes
+] + [
+    NodeBinding(
+        SliceChecker([
+            PointerClass(int8_t),
+            PointerClass(int16_t),
+            PointerClass(int16_t),
+            PointerClass(int16_t),
+            PointerClass(int16_t)
+        ], [PointerClass(int8_t)]), SliceTemplate.referenceTemplate, GAP9Transformer)
 ]
 
 GAP9ReshapeBindings = [
@@ -142,6 +159,10 @@ GAP9RQAddBindings = [
 ]
 
 GAP9AddBindings = [
+    # int32+int32->int32 parallel path; must precede the scalar binding.
+    NodeBinding(AddChecker([PointerClass(int32_t), PointerClass(int32_t)], [PointerClass(int32_t)]),
+                IntAddTemplate.referenceTemplate, GAP9Transformer)
+] + [
     NodeBinding(AddChecker([PointerClass(type1), PointerClass(type2)], [PointerClass(int32_t)]),
                 AddTemplate.referenceTemplate, GAP9Transformer)
     for type1 in IntegerDataTypes
@@ -172,6 +193,17 @@ GAP9RQSDWConv2DBindings = [
             PointerClass(int32_t),
             PointerClass(int32_t)
         ], [PointerClass(type2)]), ConvTemplate.PULPDWConv2D_8_Template, GAP9Transformer)
+    for type1, type2 in zip([int8_t, int8_t, uint8_t, uint8_t], [int8_t, uint8_t, int8_t, uint8_t])
+]
+
+GAP9RQSDWConv1DBindings = [
+    NodeBinding(
+        PULPConvChecker([
+            PointerClass(type1),
+            PointerClass(int8_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t)
+        ], [PointerClass(type2)]), ConvTemplate.PULPDWConv1D_8_Template, GAP9Transformer)
     for type1, type2 in zip([int8_t, int8_t, uint8_t, uint8_t], [int8_t, uint8_t, int8_t, uint8_t])
 ]
 
@@ -268,18 +300,26 @@ GAP9DWConv1DBinding = NodeBinding(
 
 GAP9MatMulBindings = [
     NodeBinding(MatMulChecker([PointerClass(int8_t), PointerClass(int8_t)], [PointerClass(int32_t)]),
-                GEMMTemplate.PULPMM_8_Template, GAP9ClusterTransformer)
+                #GEMMTemplate.PULPMM_8_Template, GAP9ClusterTransformer)
+                GEMMTemplate.PULPMM_s8_s8_s32_Parallel_Template, GAP9Transformer)
 ] + [
     NodeBinding(MatMulChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
                 FloatMatMulTemplate.referenceTemplate, GAP9Transformer)
+] + [
+    # A is int32 (SSM dt_proj): needs the s32_s8 kernel; s8_s8 would misread A as int8.
+    NodeBinding(MatMulChecker([PointerClass(int32_t), PointerClass(int8_t)], [PointerClass(int32_t)]),
+                GEMMTemplate.PULPMM_s32_s8_s32_Parallel_Template, GAP9Transformer)
 ]
 
 GAP9ReduceMeanBindings = [
+    NodeBinding(ReduceMeanChecker([PointerClass(int8_t)], [PointerClass(int32_t)]),
+                ReduceMeanTemplate.S8S32ParallelTemplate, GAP9Transformer)
+] + [
     NodeBinding(ReduceMeanChecker([PointerClass(type)], [PointerClass(type)]), ReduceMeanTemplate.referenceTemplate,
                 GAP9ClusterTransformer) for type in IntegerDataTypes
 ] + [
     NodeBinding(ReduceMeanChecker([PointerClass(float_type), PointerClass(integer_type)], [PointerClass(float_type)]),
-                FloatReduceMeanTemplate.referenceTemplate, GAP9ClusterTransformer)
+                FloatReduceMeanTemplate.referenceTemplate, GAP9Transformer)
     for integer_type in SignedIntegerDataTypes
     for float_type in FloatDataTypes
 ]
@@ -287,6 +327,9 @@ GAP9ReduceMeanBindings = [
 GAP9ReduceSumBindings = [
     NodeBinding(ReduceMeanChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
                 FloatReduceSumTemplate.referenceTemplate, GAP9ClusterTransformer)
+] + [
+    NodeBinding(ReduceSumChecker([PointerClass(type)], [PointerClass(int32_t)]),
+                ReduceSumTemplate.referenceTemplate, GAP9Transformer) for type in SignedIntegerDataTypes
 ]
 
 GAP9UniformRQSBindings = [
@@ -306,6 +349,27 @@ GAP9RQSBindings = [
         PULPRequantShiftChecker([PointerClass(type), PointerClass(int32_t),
                                  PointerClass(int32_t)], [PointerClass(uint8_t)]),
         RequantShiftTemplate.referenceTemplate, GAP9Transformer) for type in IntegerDataTypes
+]
+
+GAP9UniformRQS_s32Bindings = [
+    NodeBinding(
+        PULPRequantShiftChecker([PointerClass(int32_t), PointerClass(int32_t),
+                                 PointerClass(int32_t)], [PointerClass(int32_t)]),
+        UniformRequantShiftTemplate.referenceTemplate, GAP9Transformer)
+]
+
+GAP9SoftplusBindings = [
+    NodeBinding(PULPSoftplusChecker([PointerClass(int8_t)], [PointerClass(int8_t)]), SoftplusTemplate.referenceTemplate,
+                GAP9Transformer),
+    NodeBinding(PULPSoftplusChecker([PointerClass(int32_t)], [PointerClass(int16_t)]),
+                SoftplusTemplate.referenceTemplate, GAP9Transformer),
+]
+
+GAP9iLayernormBindings = [
+    NodeBinding(
+        LayerNormChecker([PointerClass(int8_t), PointerClass(int32_t),
+                          PointerClass(int64_t)], [PointerClass(int8_t)]), iLayernormTemplate.referenceTemplate,
+        GAP9Transformer)
 ]
 
 GAP9SoftmaxBindings = [
@@ -401,6 +465,11 @@ GAP9FloatGELUBinding = NodeBinding(
     GELUChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
     FloatGELUTemplate.referenceTemplate, GAP9Transformer)
 
+GAP9SILUBindings = [
+    NodeBinding(SILUChecker([PointerClass(int8_t)], [PointerClass(type)]), SILUTemplate.referenceTemplate,
+                GAP9Transformer) for type in [int8_t, int32_t]
+]
+
 GAP9GatherBindings = [
     NodeBinding(GatherChecker([PointerClass(float32_t), PointerClass(type)], [PointerClass(float32_t)]),
                 GatherTemplate.referenceTemplate, GAP9Transformer) for type in IntegerDataTypes
@@ -420,4 +489,30 @@ GAP9DequantBindings = [
                 GAP9SDKDequantQuantTemplate.fp32DequantU8Template, GAP9Transformer),
     NodeBinding(DequantChecker([PointerClass(int32_t)], [PointerClass(float32_t)]), DequantTemplate.referenceTemplate,
                 GAP9Transformer),
+]
+
+GAP9SelectiveScanBindings = [
+    NodeBinding(
+        PULPSelectiveScanChecker([
+            PointerClass(int8_t),
+            PointerClass(int8_t),
+            PointerClass(int16_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t)
+        ], [PointerClass(int8_t)]), SelectiveScanTemplate.referenceTemplate, GAP9Transformer)
+]
+
+GAP9SSDScanBindings = [
+    NodeBinding(
+        PULPSSDScanChecker([
+            PointerClass(int8_t),
+            PointerClass(int8_t),
+            PointerClass(int16_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t)
+        ], [PointerClass(int8_t)]), SSDScanTemplate.referenceTemplate, GAP9Transformer)
 ]

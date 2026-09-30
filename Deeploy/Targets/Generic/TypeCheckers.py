@@ -638,3 +638,22 @@ class RMSNormChecker(SignPropTypeChecker):
             return [True]
         else:
             return [False]
+
+
+class SILUChecker(SignPropTypeChecker):
+    # Elementwise, width preserved, signedness follows the input - same contract
+    # as RMSNormChecker above.
+
+    def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):
+        super().__init__(input_types, output_types)
+
+    def _inferNumLevels(self, inputs: List[VariableBuffer],
+                        operatorRepresentation: OperatorRepresentation) -> List[int]:
+        return [2**(self.input_types[0].referencedType.typeWidth)]
+
+    def _inferSignedness(self, inputs: List[VariableBuffer],
+                         operatorRepresentation: OperatorRepresentation) -> List[bool]:
+        if inputs[0]._signed:
+            return [True]
+        else:
+            return [False]

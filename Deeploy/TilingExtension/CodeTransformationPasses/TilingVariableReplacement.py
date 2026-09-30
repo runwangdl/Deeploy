@@ -23,7 +23,8 @@ class TilingVariableReplacement(CodeTransformationPass, IntrospectiveCodeTransfo
 
     def __init__(self, targetMemLevel: str):
         self.targetMemLevel = targetMemLevel
-        TilingHoistingMixIn.__init__(self, targetMemLevel)
+        constantsMemory = "L2" if targetMemLevel == "L1" else targetMemLevel
+        TilingHoistingMixIn.__init__(self, targetMemLevel, constantsMemory)
 
     @property
     def arenaName(self):

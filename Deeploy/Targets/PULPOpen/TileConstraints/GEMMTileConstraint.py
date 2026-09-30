@@ -84,6 +84,9 @@ class GEMMTileConstraint(TileConstraint):
             #modulus = tilerModel.addMinTileSizeConstraint(parseDict, 'O', BSecondDimVar, 8, prefix = "8_")
             modulus = tilerModel.addTileSizeDivisibleConstraint(parseDict, 'O', BSecondDimVar, 16, prefix = "16_")
 
+        if (parseDict["M"] >= 8):
+            tilerModel.addTileSizeDivisibleConstraint(parseDict, 'M', AFirstDimVar, 8, prefix = "8_M_")
+
         return tilerModel
 
     @classmethod

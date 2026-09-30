@@ -32,8 +32,10 @@ class TilingHoistingMixIn:
 
     _DEFAULT_HOIST_PREFIX = "TILING_CODEGEN_"
 
-    def __init__(self, memory: str) -> None:
+    def __init__(self, memory: str, constantsMemory: Optional[str] = None) -> None:
         self.memory = memory
+       
+        self._constantsMemory = constantsMemory if constantsMemory is not None else memory
         self._prefix = None
 
     def _initPrefix(self, nodeName: str) -> None:

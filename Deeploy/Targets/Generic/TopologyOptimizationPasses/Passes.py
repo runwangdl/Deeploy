@@ -12,6 +12,7 @@ import onnx_graphsurgeon as gs
 
 from Deeploy.CommonExtensions.OptimizationPasses.Matchers import BranchingMatcher, Match, NonBranchingMatcher
 from Deeploy.CommonExtensions.OptimizationPasses.PassClasses import ReplaceSequentialPatternPass, contextagnostic
+from Deeploy.CommonExtensions.OptimizationPasses.PassClasses import Pass
 
 
 def _merge_trueintegerdiv_rq_fun(graph: gs.Graph, match: Match, name: str):
@@ -864,9 +865,18 @@ def _split_rqs_fun(graph: gs.Graph, match: Match, name: str, splitSet: List[str]
         varName = node.name + f"_rqs_var"
         newOutput = gs.Variable(name = varName, dtype = np.float32, shape = t1.outputs[0].shape)
 
+        # Each clone needs its own Constants: a shared gs.Constant fails hoistConstant (asserts <=1 output).
+        nodeInputs = []
+        for varIdx, var in enumerate(inputVars):
+            if isinstance(var, gs.Variable):
+                nodeInputs.append(var)
+            else:
+                nodeInputs.append(
+                    gs.Constant(name = f"{t1.name}_split_{varIdx}_{idx}", values = var.values.copy().reshape(-1,)))
+
         RQSNode = gs.Node(name = nodeName,
                           op = "RequantShift",
-                          inputs = postSplitInputs,
+                          inputs = nodeInputs,
                           outputs = [newOutput],
                           attrs = t1.attrs)
 
@@ -1270,3 +1280,51 @@ class DequantQuantMergePass(ReplaceSequentialPatternPass):
 
         name = "_MERGE_DEQUANT_QUANT_PASS"
         super().__init__(graph, _merge_dequant_quant_fun, name)
+
+
+
+
+def _split_to_slice_fun(graph: gs.Graph, split_node: gs.Node, name: str):
+    input = split_node.inputs[0]
+    axis = int(split_node.attrs.get('axis', 0))
+    rank = len(input.shape) if input.shape is not None else 0
+    norm_axis = axis if axis >= 0 else axis + rank
+
+    num_outputs = len(split_node.outputs)
+    if len(split_node.inputs) > 1 and isinstance(split_node.inputs[1], gs.Constant):
+        split_ranges = [int(value) for value in split_node.inputs[1].values.tolist()]
+    elif 'split' in split_node.attrs:
+        split_ranges = [int(value) for value in split_node.attrs['split']]
+    else:
+        split_ranges = [int(input.shape[norm_axis]) // num_outputs] * num_outputs
+
+    start = 0
+    for out_index, out in enumerate(list(split_node.outputs)):
+        end = start + split_ranges[out_index]
+        graph.nodes.append(
+            gs.Node(op = 'Slice',
+                    name = f"{name}_slice{out_index}",
+                    inputs = [
+                        input,
+                        gs.Constant(f"{name}_slice{out_index}_start", np.array([start], dtype = np.int64)),
+                        gs.Constant(f"{name}_slice{out_index}_end", np.array([end], dtype = np.int64)),
+                        gs.Constant(f"{name}_slice{out_index}_axes", np.array([norm_axis], dtype = np.int64)),
+                        gs.Constant(f"{name}_slice{out_index}_steps", np.array([1], dtype = np.int64)),
+                    ],
+                    outputs = [out]))
+        start = end
+
+    split_node.inputs.clear()
+    split_node.outputs.clear()
+    return graph
+
+
+@contextagnostic
+class SplitToSlicePass(Pass):
+
+    def run_pass(self, graph: gs.Graph) -> gs.Graph:
+        split_nodes = [n for n in graph.nodes if n.op == 'Split']
+        for i, split in enumerate(split_nodes):
+            _split_to_slice_fun(graph, split, f"_SPLIT_TO_SLICE_PASS_{i}")
+        graph.cleanup().toposort()
+        return graph
