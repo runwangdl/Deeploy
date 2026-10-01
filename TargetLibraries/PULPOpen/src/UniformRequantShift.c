@@ -36,7 +36,7 @@ void UniformRequantShift_s8_s8(int8_t *data_in, int32_t size, int32_t mul,
 
     // Compute i
     intermediate = (reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -46,7 +46,7 @@ void UniformRequantShift_s8_s8(int8_t *data_in, int32_t size, int32_t mul,
 
     // Compute step halfChunkSize + i
     intermediate = (reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[halfChunkSize + i] = out;
@@ -59,13 +59,13 @@ void UniformRequantShift_s8_s8(int8_t *data_in, int32_t size, int32_t mul,
     reg_data_in_A = data_in[chunk_stop];
 
     intermediate = (reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[chunk_stop - 1] = out;
 
     intermediate = (reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[chunk_stop] = out;
@@ -101,7 +101,7 @@ void UniformRequantShift_u8_s8(uint8_t *data_in, int32_t size, int32_t mul,
 
     // Compute i
     intermediate = (reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -111,7 +111,7 @@ void UniformRequantShift_u8_s8(uint8_t *data_in, int32_t size, int32_t mul,
 
     // Compute step halfChunkSize + i
     intermediate = (reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[halfChunkSize + i] = out;
@@ -124,13 +124,13 @@ void UniformRequantShift_u8_s8(uint8_t *data_in, int32_t size, int32_t mul,
     reg_data_in_A = data_in[chunk_stop];
 
     intermediate = (reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[chunk_stop - 1] = out;
 
     intermediate = (reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[chunk_stop] = out;
@@ -166,7 +166,7 @@ void UniformRequantShift_s16_s8(int16_t *data_in, int32_t size, int32_t mul,
 
     // Compute i
     intermediate = (reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -176,7 +176,7 @@ void UniformRequantShift_s16_s8(int16_t *data_in, int32_t size, int32_t mul,
 
     // Compute step halfChunkSize + i
     intermediate = (reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[halfChunkSize + i] = out;
@@ -189,13 +189,13 @@ void UniformRequantShift_s16_s8(int16_t *data_in, int32_t size, int32_t mul,
     reg_data_in_A = data_in[chunk_stop];
 
     intermediate = (reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[chunk_stop - 1] = out;
 
     intermediate = (reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[chunk_stop] = out;
@@ -302,7 +302,7 @@ void UniformRequantShift_s32_s8(int32_t *data_in, int32_t size, int32_t mul,
 
     // Compute i
     intermediate = (reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -312,7 +312,7 @@ void UniformRequantShift_s32_s8(int32_t *data_in, int32_t size, int32_t mul,
 
     // Compute step halfChunkSize + i
     intermediate = (reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[halfChunkSize + i] = out;
@@ -325,13 +325,13 @@ void UniformRequantShift_s32_s8(int32_t *data_in, int32_t size, int32_t mul,
     reg_data_in_A = data_in[chunk_stop];
 
     intermediate = (reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[chunk_stop - 1] = out;
 
     intermediate = (reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[chunk_stop] = out;

@@ -67,7 +67,7 @@ def generateTestInputsHeader(deployer: NetworkDeployer, test_inputs: List) -> st
         retStr += f"{typeName} {vectorName}[] ="
         retStr += "{"
         if typeName == 'float32_t':
-            list_str = (", ").join([f'{x}f' if not (np.isinf(x) or np.isnan(x)) else str(x) for x in values])
+            list_str = (", ").join([f'{float(x)}f' if not (np.isinf(x) or np.isnan(x)) else str(x) for x in values])
         else:
             list_str = (", ").join([str(x) for x in values])
 
@@ -102,7 +102,7 @@ def generateTestOutputsHeader(deployer: NetworkDeployer, test_outputs: List[np.n
         values = values.flatten()
 
         if typeName == "float32_t":
-            list_str = (", ").join([f'{x}f' if not (np.isinf(x) or np.isnan(x)) else str(x) for x in values])
+            list_str = (", ").join([f'{float(x)}f' if not (np.isinf(x) or np.isnan(x)) else str(x) for x in values])
         else:
             list_str = (", ").join([str(x) for x in values])
 

@@ -345,6 +345,13 @@ GAP9RQSBindings = [
                                  PointerClass(int32_t)], [PointerClass(int8_t)]),
         RequantShiftTemplate.referenceTemplate, GAP9Transformer) for type in IntegerDataTypes
 ] + [
+    # uint8 outputs: NE16 reads activations as unsigned bytes, so a signed int8 feature map is
+    # re-biased to x + 128 with a (mul 1, add 128, div 1) RequantShift before an NE16 conv.
+    NodeBinding(
+        PULPRequantShiftChecker([PointerClass(type), PointerClass(int32_t),
+                                 PointerClass(int32_t)], [PointerClass(uint8_t)]),
+        RequantShiftTemplate.referenceTemplate, GAP9Transformer) for type in IntegerDataTypes
+] + [
     NodeBinding(
         PULPRequantShiftChecker([PointerClass(type), PointerClass(int32_t),
                                  PointerClass(int32_t)], [PointerClass(uint8_t)]),

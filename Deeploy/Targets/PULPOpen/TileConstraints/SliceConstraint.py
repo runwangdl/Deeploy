@@ -52,6 +52,19 @@ class SliceTileConstraint(TileConstraint):
                 axStep = sliceSteps[axIndex]
 
                 tilerModel.addConstraint(inputDimensionVar == ((outputDimensionVar - 1) * abs(axStep) + 1))
+
+                # The template bakes starts/ends/data_in_shape in at generation time (see issue
+                # #134 below: per-tile replacement is frozen), so a reversed axis cannot be cut
+                # into tiles: the kernel would index the full-length reverse inside a shorter
+                # tile. FEMBA's sequence flips tiled over L came out 69% wrong at --l1 24000.
+                # Keep reversed axes whole; the other axes still tile.
+                if axStep < 0:
+                    tilerModel.addConstraint(inputDimensionVar == int(inputShape[idx]))
+                    # ...and since the reverse path's strides (dimSteps) also come from the
+                    # frozen full shape, no other axis may be tiled either: pin everything.
+                    for jdx in range(len(inputShape)):
+                        tilerModel.addConstraint(
+                            tilerModel.getTensorDimVar(tensorName = inputBufferName, dimIdx = jdx) == int(inputShape[jdx]))
             else:
                 # Otherwise, input and output dimensions need to be equal
                 tilerModel.addConstraint(outputDimensionVar == inputDimensionVar)

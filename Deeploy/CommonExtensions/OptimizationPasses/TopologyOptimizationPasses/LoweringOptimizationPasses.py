@@ -490,6 +490,87 @@ class RequantizedGemmToPwPass(ReplaceSequentialPatternPass):
         super().__init__(graph, _requantized_gemm_to_pw_fun, "_REQUANTIZED_GEMM_TO_PW_PASS")
 
 
+def _matmul_to_pw_fun(graph: gs.Graph, match: Match, name: str):
+    """Lower an un-requantized MatMul (8-bit activations x constant 8-bit weights,
+    32-bit accumulator out) to a pointwise convolution, the same way
+    _requantized_gemm_to_pw_fun does for RequantizedGemm, so an accelerator with
+    a 32-bit output path (NE16) can take it. FEMBA's SSM input projections
+    (x -> dt_rank / B / C) are exactly this shape and otherwise stay on the
+    cores at ~2.5 MAC/cycle."""
+    node = next(iter((match.nodes_map.values())))
+
+    matrixA = node.inputs[0]
+    matrixB = node.inputs[1]
+    matrixY: gs.Variable = node.outputs[0]
+
+    if not isinstance(matrixB, gs.Constant) or isinstance(matrixA, gs.Constant):
+        return graph
+    if len(matrixA.shape) not in (2, 3) or len(matrixY.shape) not in (2, 3) or len(matrixB.shape) != 2:
+        return graph
+
+    # Types are only inferred after lowering, so the 8-bit-input requirement is
+    # checked structurally: an operand produced by another MatMul/Gemm, or by a
+    # non-requantized Conv (which is what this pass itself turns a MatMul into),
+    # is a 32-bit accumulator (FEMBA's dt_proj input) and must stay on the cores.
+    # Shape-only nodes in between (the Reshapes this pass inserts) are looked through.
+    def _realProducer(tensor: gs.Variable):
+        while len(tensor.inputs) == 1 and tensor.inputs[0].op in ("Reshape", "Squeeze", "Unsqueeze", "Transpose",
+                                                                  "Flatten"):
+            tensor = tensor.inputs[0].inputs[0]
+        return tensor.inputs[0] if len(tensor.inputs) == 1 else None
+
+    producer = _realProducer(matrixA)
+    if producer is not None and producer.op in ("MatMul", "Gemm", "Conv"):
+        return graph
+
+    M, N = matrixA.shape[-2], matrixY.shape[-1]
+    if not (isinstance(M, int) and isinstance(N, int)) or M < 9 or N < 8:
+        # Too small for an accelerator job (e.g. a [1 x K] classifier).
+        return graph
+
+    # Weight [K x N] -> [N x K], then [N x 1 x 1 x K] (HWC pointwise)
+    matrixB.values = matrixB.values.transpose(_swapLastTwoDimsPermutation(len(matrixB.shape)))
+
+    expandAxis = []
+    if len(matrixA.shape) == 2:
+        expandAxis.append(0)
+    expandAxis.append(1)
+    matrixAExpandDimsNode, pwIn = _appendExpandDims(matrixA, name, axis = expandAxis)
+    graph.nodes.append(matrixAExpandDimsNode)
+
+    matrixBExpandDimsNode, pwWeight = _appendExpandDims(matrixB, name, axis = (1, 2))
+    graph.nodes.append(matrixBExpandDimsNode)
+
+    squeezeDims = (0, 1) if len(matrixY.shape) == 2 else (1,)
+    matrixYSqueezeDimsNode, pwOut = _prependSqueezeDims(matrixY, name, squeezeDims)
+    graph.nodes.append(matrixYSqueezeDimsNode)
+
+    pwAttrs = {
+        'channels_first': False,
+        'dilations': [1, 1],
+        'group': 1,
+        'kernel_shape': [1, 1],
+        'pads': [0, 0, 0, 0],
+        'strides': [1, 1],
+    }
+    pw = gs.Node(op = 'Conv', name = name + "_PwConv", inputs = [pwIn, pwWeight], outputs = [pwOut], attrs = pwAttrs)
+    graph.nodes.append(pw)
+
+    node.inputs.clear()
+    node.outputs.clear()
+    graph.nodes.remove(node)
+
+    return graph
+
+
+@contextagnostic
+class MatMulToPwPass(ReplaceSequentialPatternPass):
+
+    def __init__(self):
+        graph = _singleNodePattern("MatMul")
+        super().__init__(graph, _matmul_to_pw_fun, "_MATMUL_TO_PW_PASS")
+
+
 def _remove_global_output_reshape_fun(graph: gs.Graph, match: Match, name: str):
     node = next(iter((match.nodes_map.values())))
 

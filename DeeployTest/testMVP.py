@@ -249,6 +249,7 @@ if __name__ == '__main__':
 
     if args.debug:
         test_inputs, test_outputs, graph = generateDebugConfig(inputs, outputs, activations, graph)
+        test_input_original_dtypes = [inputs[x].dtype for x in inputs.files]
     else:
         # Load as float64 for uniform handling, but preserve original dtypes for type inference
         test_input_original_dtypes = [inputs[x].dtype for x in inputs.files]

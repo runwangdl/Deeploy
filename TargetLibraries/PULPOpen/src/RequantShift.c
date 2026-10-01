@@ -17,7 +17,7 @@ void RequantShift_u8_s8_NHWC(uint8_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate = ((int32_t)data_in[i] + input_offset) * mul[i % channels] +
                    add[i % channels];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -34,7 +34,7 @@ void RequantShift_u16_s8_NHWC(uint16_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate = ((int32_t)data_in[i] + input_offset) * mul[i % channels] +
                    add[i % channels];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -51,7 +51,7 @@ void RequantShift_u32_s8_NHWC(uint32_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate = ((int32_t)data_in[i] + input_offset) * mul[i % channels] +
                    add[i % channels];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -68,7 +68,7 @@ void RequantShift_u8_s8_NCHW(uint8_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate =
         ((int32_t)data_in[i] + input_offset) * mul[i / HW] + add[i / HW];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -85,7 +85,7 @@ void RequantShift_u16_s8_NCHW(uint16_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate =
         ((int32_t)data_in[i] + input_offset) * mul[i / HW] + add[i / HW];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -102,7 +102,7 @@ void RequantShift_u32_s8_NCHW(uint32_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate =
         ((int32_t)data_in[i] + input_offset) * mul[i / HW] + add[i / HW];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -119,7 +119,7 @@ void RequantShift_u8_u8_NHWC(uint8_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate = ((int32_t)data_in[i] + input_offset) * mul[i % channels] +
                    add[i % channels];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -136,7 +136,7 @@ void RequantShift_u16_u8_NHWC(uint16_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate = ((int32_t)data_in[i] + input_offset) * mul[i % channels] +
                    add[i % channels];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP((uint32_t)intermediate, output_min, output_max);
     data_out[i] = out;
@@ -153,7 +153,7 @@ void RequantShift_u32_u8_NHWC(uint32_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate = ((int32_t)data_in[i] + input_offset) * mul[i % channels] +
                    add[i % channels];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP((uint32_t)intermediate, output_min, output_max);
     data_out[i] = out;
@@ -170,7 +170,7 @@ void RequantShift_u8_u8_NCHW(uint8_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate =
         ((int32_t)data_in[i] + input_offset) * mul[i / HW] + add[i / HW];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP((uint32_t)intermediate, output_min, output_max);
     data_out[i] = out;
@@ -187,7 +187,7 @@ void RequantShift_u16_u8_NCHW(uint16_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate =
         ((int32_t)data_in[i] + input_offset) * mul[i / HW] + add[i / HW];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP((uint32_t)intermediate, output_min, output_max);
     data_out[i] = out;
@@ -204,7 +204,7 @@ void RequantShift_u32_u8_NCHW(uint32_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate =
         ((int32_t)data_in[i] + input_offset) * mul[i / HW] + add[i / HW];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP((uint32_t)intermediate, output_min, output_max);
     data_out[i] = out;
@@ -221,7 +221,7 @@ void RequantShift_s8_u8_NHWC(int8_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate = ((int32_t)data_in[i] + input_offset) * mul[i % channels] +
                    add[i % channels];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -238,7 +238,7 @@ void RequantShift_s16_u8_NHWC(int16_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate = ((int32_t)data_in[i] + input_offset) * mul[i % channels] +
                    add[i % channels];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -255,7 +255,7 @@ void RequantShift_s32_u8_NHWC(int32_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate = ((int32_t)data_in[i] + input_offset) * mul[i % channels] +
                    add[i % channels];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -272,7 +272,7 @@ void RequantShift_s8_u8_NCHW(int8_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate =
         ((int32_t)data_in[i] + input_offset) * mul[i / HW] + add[i / HW];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -289,7 +289,7 @@ void RequantShift_s16_u8_NCHW(int16_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate =
         ((int32_t)data_in[i] + input_offset) * mul[i / HW] + add[i / HW];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -306,7 +306,7 @@ void RequantShift_s32_u8_NCHW(int32_t *data_in, int32_t size, int32_t *mul,
   for (int i = 0; i < size; i++) {
     intermediate =
         ((int32_t)data_in[i] + input_offset) * mul[i / HW] + add[i / HW];
-    intermediate = ((intermediate + ((1 << (log2D - 1))) * rounding) >> log2D) +
+    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (uint8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;

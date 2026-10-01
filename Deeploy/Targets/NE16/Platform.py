@@ -5,7 +5,7 @@
 from typing import Optional
 
 from Deeploy.CommonExtensions.OptimizationPasses.TopologyOptimizationPasses.LoweringOptimizationPasses import \
-    RequantizedGemmToPwPass
+    MatMulToPwPass, RequantizedGemmToPwPass
 from Deeploy.DeeployTypes import TopologyOptimizer
 from Deeploy.MemoryLevelExtension.MemoryLevels import MemoryHierarchy, MemoryLevel
 from Deeploy.Targets.GAP9.Platform import GAP9ClusterEngine, GAP9ConstantBuffer, GAP9Platform, GAP9StructBuffer, \
@@ -16,6 +16,7 @@ from Deeploy.Targets.PULPOpen.Platform import PULPOptimizer
 NE16Optimizer = TopologyOptimizer([
     *PULPOptimizer.passes,
     RequantizedGemmToPwPass(),
+    MatMulToPwPass(),
 ], name = "NE16Optimizer")
 
 

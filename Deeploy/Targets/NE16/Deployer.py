@@ -11,7 +11,8 @@ from Deeploy.DeeployTypes import DeploymentPlatform, TopologyOptimizer
 from Deeploy.Targets.GAP9.Deployer import GAP9Deployer
 from Deeploy.Targets.Generic.TopologyOptimizationPasses.Passes import TransposeConstOptPass, TransposeMergePass, \
     TransposeNoPermOptPass, TransposeSplitPass
-from Deeploy.Targets.NE16.TopologyOptimizationPasses.Passes import ConvEngineDiscolorationPass, NE16OptimizationPass
+from Deeploy.Targets.NE16.TopologyOptimizationPasses.Passes import ConvEngineDiscolorationPass, NE16OptimizationPass, \
+    NE16UnsignedInputPass
 
 
 class NE16Deployer(GAP9Deployer):
@@ -36,6 +37,7 @@ class NE16Deployer(GAP9Deployer):
 
         self.loweringOptimizer.passes += [
             ConvEngineDiscolorationPass(),
+            NE16UnsignedInputPass("NE16"),
             NE16OptimizationPass(self.default_channels_first, "NE16"),
             # NE16OptimizationPass appends its own layout transposes (see
             # _appendTranspose in the NE16 passes). It runs *after* the

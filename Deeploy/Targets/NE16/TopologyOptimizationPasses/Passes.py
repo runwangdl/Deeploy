@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import itertools
+import os
 import math
 from functools import partial
 from typing import Generator, List, Tuple
@@ -87,15 +88,29 @@ def _ne16_adjust_weight_memory_layout_fun(graph: gs.Graph, match: Match, name: s
     # Adjust N-EUREKA's weights
     values = weightTensor.values
 
-    # Extract weight offset and translate weights by the offset
-    weight_offset = values.min()
-    values = values - weight_offset
-    node.attrs["weight_offset"] = weight_offset
-
     if "channels_first" in node.attrs:
         channels_first = node.attrs["channels_first"]
     else:
         channels_first = default_channels_first
+
+    # Pad the input-channel axis to a multiple of NE16's 16-channel subtile BEFORE the
+    # offset shift below. _weightEncode pads with 0, but after the shift 0 encodes
+    # W = weight_offset (e.g. -127), not W = 0, so for Ki % 16 != 0 the last subtile
+    # multiplied whatever bytes follow the pixel's channels in L1 by weight_offset.
+    # FEMBA's projections (Ki = 385 and 1540) came out sign-flipped because of this;
+    # every CI network has Ki % 16 == 0 and never hit it.
+    if node.attrs['group'] == 1:
+        cinAxis = 3 if not channels_first else 1
+        cin = values.shape[cinAxis]
+        if cin % 16 != 0:
+            padWidth = [(0, 0)] * values.ndim
+            padWidth[cinAxis] = (0, 16 - cin % 16)
+            values = np.pad(values, padWidth, "constant", constant_values = 0)
+
+    # Extract weight offset and translate weights by the offset
+    weight_offset = values.min()
+    values = values - weight_offset
+    node.attrs["weight_offset"] = weight_offset
 
     # Weight encode expects channels-first (cout, cin_per_group, H, W)
     if not channels_first:
@@ -258,6 +273,137 @@ class NE16ReshapePointwiseConvolutionPass(ReplaceSequentialPatternPass):
                     default_channels_first = default_channels_first,
                     ne16EngineName = ne16EngineName), "_NE16_RESHAPE_POINTWISE_CONVOLUTION_PASS",
             NonBranchingMatcher(regex_op = True))
+
+
+_SIGNED_PRODUCERS = ("SILU", "SelectiveScan", "SSD_Scan", "Mamba3_Scan", "Softplus", "Add", "MatMul", "Gemm",
+                     "iLayerNorm", "LayerNormalization", "iRMSNorm", "Sub", "Mul")
+_SHAPE_OPS = ("Reshape", "Transpose", "Squeeze", "Unsqueeze", "Flatten", "Slice", "Split")
+
+
+def _inputIsSigned(tensor: gs.Variable) -> bool:
+    """Best-effort signedness of an activation before type inference has run: follow the
+    producer through shape-only ops; requantizing producers carry a 'signed' attribute."""
+    seen = 0
+    while len(tensor.inputs) == 1 and tensor.inputs[0].op in _SHAPE_OPS and seen < 8:
+        tensor = tensor.inputs[0].inputs[0]
+        seen += 1
+    if len(tensor.inputs) != 1:
+        return True  # graph input: assume signed (FEMBA); CI's uint8 nets never reach here
+    producer = tensor.inputs[0]
+    if "signed" in producer.attrs:
+        return bool(int(np.asarray(producer.attrs["signed"]).item()))
+    if producer.op in ("Relu", "MaxPool", "AveragePool"):
+        return False
+    return True
+
+
+def _ne16_unsigned_input_fun(graph: gs.Graph, match: Match, name: str, ne16EngineName: str):
+    """NE16 has no signed-activation mode (config bit 26 is undefined in the gvsoc model and in
+    pulp-nnx): it multiplies the raw bytes as uint8. For a signed int8 feature map x this pass
+    feeds NE16 x_u = x + 128 (a RequantShift with mul 1 / add 128 / div 1 to uint8) and removes
+    the 128 * sum_k W[k, ko] that adds to every output through NE16's own per-channel bias, so
+    the accumulator is exact. The node stays a RequantizedConv with scale 1, shift 0 and a
+    32-bit output; the original requantization (mul, add, div) is then done by the cluster's
+    RequantShift kernel, because NE16's norm/quant stage truncates acc * scale to 32 bit and
+    FEMBA's scales (mul ~ 7e4 over 2^24) overflow it."""
+    node = list(match.nodes_map.values())[0]
+    if os.environ.get("DEEPLOY_NE16_UNSIGNED_PASS", "1") == "0":  # debugging kill switch
+        return graph
+    if node.attrs.get("engine") != ne16EngineName:
+        return graph
+    if node.attrs.get("kernel_shape") != [1, 1] or node.attrs.get("group", 1) != 1:
+        return graph
+    if node.attrs.get("ne16_unsigned_input_done"):
+        return graph
+    x = node.inputs[0]
+    weight = node.inputs[1]
+    if not isinstance(weight, gs.Constant) or not isinstance(x, gs.Variable):
+        return graph
+    if not _inputIsSigned(x):
+        return graph
+
+    W = weight.values.astype(np.int64)
+    Ko = W.shape[0]
+    comp = (-128 * W.reshape(Ko, -1).sum(axis = 1)).astype(np.int32)
+
+    def _attr(v):
+        return gs.Constant(f"{name}_attr_{np.random.randint(1 << 30)}", np.array([v]))
+
+    # 1) x -> x + 128 as uint8
+    x_u = gs.Variable(name = f"{name}_{x.name}_u8", dtype = np.float32, shape = x.shape)
+    graph.nodes.append(
+        gs.Node(op = "RequantShift",
+                name = f"{name}_to_u8",
+                inputs = [
+                    x,
+                    # per-channel vectors on purpose: the uniform (scalar) RequantShift has no
+                    # uint8-output kernel on PULP, the per-channel one (RequantShift_s8_u8_NHWC) has
+                    # (2x + 256 + 1) >> 1 == x + 128 exactly; div 2 instead of 1 because the
+                    # RequantShift kernels' rounding term is 1 << (log2D - 1), undefined at log2D 0
+                    gs.Constant(f"{name}_u8_mul", np.full(int(x.shape[-1]), 2, dtype = np.int32)),
+                    gs.Constant(f"{name}_u8_add", np.full(int(x.shape[-1]), 256, dtype = np.int32))
+                ],
+                outputs = [x_u],
+                attrs = {
+                    "div": _attr(2),
+                    "n_levels_out": np.array([256.0]),
+                    "signed": np.array([0.0])
+                }))
+    node.inputs[0] = x_u
+
+    # 2) the conv: scale 1, bias -128*sum(W), shift 0, 32-bit output
+    y = node.outputs[0]
+    orig = None
+    if node.op == "RequantizedConv":
+        orig = (node.inputs[2], node.inputs[3], node.attrs["div"],
+                node.attrs.get("n_levels_out", node.attrs.get("n_levels")), node.attrs.get("signed", np.array([1.0])))
+        node.inputs[2] = gs.Constant(f"{name}_scale1", np.ones(Ko, dtype = np.int32))
+        node.inputs[3] = gs.Constant(f"{name}_comp", comp)
+    else:
+        node.op = "RequantizedConv"
+        node.inputs.append(gs.Constant(f"{name}_scale1", np.ones(Ko, dtype = np.int32)))
+        node.inputs.append(gs.Constant(f"{name}_comp", comp))
+    node.attrs["div"] = _attr(1)
+    node.attrs["n_levels_out"] = np.array([float(2**32)])
+    node.attrs["signed"] = np.array([1.0])
+    node.attrs["shift"] = _attr(0)
+    node.attrs["ne16_unsigned_input_done"] = 1
+
+    # 3) the original requantization, on the cluster
+    if orig is not None:
+        mul0, add0, div0, nlev0, signed0 = orig
+        # The Conv/GEMM + RequantShift merge passes fold the rounding half 2^(shift-1) into
+        # `add` because the fused pulp-nn kernels truncate; the standalone RequantShift
+        # kernel rounds itself, so take it out again or every output rounds twice.
+        shift = int(np.log2(float(np.asarray(div0.values if isinstance(div0, gs.Constant) else div0).reshape(-1)[0])))
+        addVals = np.asarray(add0.values, dtype = np.int64) - ((1 << (shift - 1)) if shift > 0 else 0)
+        add1 = gs.Constant(f"{name}_requant_add", addVals.astype(np.int32))
+        y32 = gs.Variable(name = f"{name}_{y.name}_i32", dtype = np.float32, shape = y.shape)
+        node.outputs[0] = y32
+        graph.nodes.append(
+            gs.Node(op = "RequantShift",
+                    name = f"{name}_requant",
+                    inputs = [y32, mul0, add1],
+                    outputs = [y],
+                    attrs = {
+                        "div": div0,
+                        "n_levels_out": nlev0,
+                        "signed": signed0
+                    }))
+    return graph
+
+
+@contextagnostic
+class NE16UnsignedInputPass(ReplaceSequentialPatternPass):
+
+    def __init__(self, ne16EngineName: str = "NE16"):
+        graph = gs.Graph()
+        _input = gs.Variable(name = 'input_1')
+        output = graph.layer(inputs = [_input], outputs = ['out'], op = 'RequantizedConv|Conv', name = 'node')
+        graph.outputs.append(output)
+        graph.inputs.append(_input)
+        super().__init__(graph, partial(_ne16_unsigned_input_fun, ne16EngineName = ne16EngineName),
+                         "_NE16_UNSIGNED_INPUT_PASS", NonBranchingMatcher(regex_op = True))
 
 
 class ConvEngineDiscolorationPass(EngineDiscolorationPass):
