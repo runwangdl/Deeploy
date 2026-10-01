@@ -40,6 +40,11 @@
 
 #include "Mamba3ScanLUT.h"
 
+// Define M3_SKIP_ROPE to compile out the three m3_rope_row calls. The rotation runs
+// regardless of theta (there is no data-dependent skip), so a theta == 0 fixture already pays
+// for it; compiling it out is the only way to measure what it costs. Measured on the euler
+// fixture: 7,147,452 with rotation, 6,962,126 without -> 2.6% of the kernel, against the
+// 4N/(N*P) = 5% back-of-envelope. Leave undefined for production.
 #define M3_WIDE_FRAC_BITS 15
 #define M3_Q20 (1 << 20)
 #define M3_EXP_STEP (M3_Q20 / 128)
@@ -228,7 +233,9 @@ void GAP9_Mamba3Scan_i8_i8(
           int32_t *dB_row = &dB_chunk[pos_in_chunk * NR];
           for (int j = 0; j < NR; ++j)
             dB_row[j] = B_row[j];
+#ifndef M3_SKIP_ROPE
           m3_rope_row(dB_row, N, R, theta_cum);
+#endif
           for (int j = 0; j < NR; ++j)
             dB_row[j] = (int32_t)m3_asr(w_key * (int64_t)dB_row[j], 8);
         }
@@ -251,7 +258,9 @@ void GAP9_Mamba3Scan_i8_i8(
 
           for (int j = 0; j < NR; ++j)
             C_query_cache[j] = C_query[j];
+#ifndef M3_SKIP_ROPE
           m3_rope_row(C_query_cache, N, R, theta_chunk[query_idx]);
+#endif
 
           // diagonal weight gamma_q on the rotated, un-w-weighted B_q
           {
@@ -259,7 +268,9 @@ void GAP9_Mamba3Scan_i8_i8(
             const int32_t *B_q = &B[(batch * L + time_query) * group_state + group * NR];
             for (int j = 0; j < NR; ++j)
               dB_diag[j] = B_q[j];
+#ifndef M3_SKIP_ROPE
             m3_rope_row(dB_diag, N, R, theta_chunk[query_idx]);
+#endif
             for (int j = 0; j < NR; ++j)
               dB_diag[j] = (int32_t)m3_asr(gamma_q * (int64_t)dB_diag[j], 8);
           }
