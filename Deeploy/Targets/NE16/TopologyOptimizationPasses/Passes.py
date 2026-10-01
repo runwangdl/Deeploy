@@ -354,8 +354,38 @@ def _ne16_unsigned_input_fun(graph: gs.Graph, match: Match, name: str, ne16Engin
                 }))
     node.inputs[0] = x_u
 
-    # 2) the conv: scale 1, bias -128*sum(W), shift 0, 32-bit output
+    # 2a) NE16-side requantization (DEEPLOY_NE16_REQUANT=1). gvsoc's NE16 norm/quant is
+    #     out = clip8((acc * nq8[ko] + bias32[ko]) >> shift) with an 8-bit unsigned per-channel
+    #     scale and a layerwise shift (normalization_bits is fixed to 8 in ne16v2). It is taken
+    #     only when the model's multiplier is exactly nq8 * 2^s (so the result is bit-identical
+    #     to RequantShift on the cluster; FEMBA models are rewritten that way beforehand).
+    #     The +128 input compensation is folded into the bias: bias = -128*sum(W)*nq8 + (add >> s),
+    #     exact because add already carries the rounding half 2^(log2D-1) from the merge pass.
     y = node.outputs[0]
+    if os.environ.get("DEEPLOY_NE16_REQUANT", "0") == "1" and node.op == "RequantizedConv":
+        def _val(v):
+            return np.asarray(v.values if isinstance(v, gs.Constant) else v, dtype = np.float64).reshape(-1)[0]
+        mul0 = np.asarray(node.inputs[2].values, dtype = np.int64).reshape(-1)
+        add0 = np.asarray(node.inputs[3].values, dtype = np.int64).reshape(-1)
+        log2D = int(np.log2(_val(node.attrs["div"])))
+        nlev = _val(node.attrs.get("n_levels_out", node.attrs.get("n_levels")))
+        mmax = int(mul0.max())
+        s = max(0, int(np.ceil(np.log2(mmax / 255.0)))) if mmax > 255 else 0
+        nq8 = mul0 >> s
+        if nlev <= 256 and mul0.min() > 0 and np.all((nq8 << s) == mul0) and 1 <= log2D - s <= 31:
+            if mul0.size == 1:
+                nq8 = np.full(Ko, nq8[0], dtype = np.int64)
+            if add0.size == 1:
+                add0 = np.full(Ko, add0[0], dtype = np.int64)
+            bias = comp.astype(np.int64) * nq8 + (add0 >> s)
+            if np.abs(bias).max() < 2**31:
+                node.inputs[2] = gs.Constant(f"{name}_nq8", nq8.astype(np.uint8))
+                node.inputs[3] = gs.Constant(f"{name}_bias", bias.astype(np.int32))
+                node.attrs["div"] = _attr(float(2**(log2D - s)))
+                node.attrs["ne16_unsigned_input_done"] = 1
+                node.attrs["ne16_requant_on_accelerator"] = 1
+                return graph
+    # 2) the conv: scale 1, bias -128*sum(W), shift 0, 32-bit output
     orig = None
     if node.op == "RequantizedConv":
         def _arr(v):  # attributes may arrive as python scalars, arrays or Constants; parsers want arrays/Constants

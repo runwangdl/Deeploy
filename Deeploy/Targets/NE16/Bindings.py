@@ -29,11 +29,13 @@ NE16RQSPWConv2DBindings = [
         NE16RQSConvChecker(
             [PointerClass(data_in_type),
              PointerClass(weight_type),
-             PointerClass(int32_t),
+             PointerClass(mul_type),
              PointerClass(int32_t)], [PointerClass(data_out_type)]), NE16RqntPWConv2D_Template, ClusterTransformer)
     for data_in_type in [uint8_t, int8_t]
     for data_out_type in [uint8_t, int8_t, int32_t]
     for weight_type in [uint8_t, int8_t]
+    # uint8 mul: NE16's own 8-bit per-channel scale (NE16UnsignedInputPass, DEEPLOY_NE16_REQUANT=1)
+    for mul_type in [int32_t, uint8_t]
 ]
 NE16PWConv2DBindings = [
     NodeBinding(
