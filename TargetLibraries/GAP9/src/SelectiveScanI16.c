@@ -39,6 +39,54 @@ static inline int32_t _i16_clip16(int32_t v) {
   return v > 32767 ? 32767 : (v < -32768 ? -32768 : v);
 }
 
+
+static int8_t __attribute__((unused)) _i16_output(int32_t acc, int32_t sh_y, int32_t d_skip_val, int32_t x_val,
+                                                    int32_t gate, int32_t output_requant_mul_q40) {
+  int64_t y_acc = (((int64_t)acc) << sh_y) >> 15;
+  y_acc += (int64_t)d_skip_val * (int64_t)x_val;
+  const int64_t y_gated = _i16_round_shift_i64(y_acc * (int64_t)gate, 13);
+  int64_t y_out = _i16_round_shift_i64(y_gated * (int64_t)output_requant_mul_q40, 40);
+  return (int8_t)(y_out > 127 ? 127 : (y_out < -128 ? -128 : y_out));
+}
+
+static void __attribute__((noinline)) _i16_scan_generic(
+    const int8_t *x, const int8_t *z, const int16_t *dt, const int16_t *B16, const int16_t *C16,
+    const int16_t *A16, const int32_t *D_skip, const int8_t *shA, const uint8_t *sH, const uint8_t *ysh,
+    int8_t *y, int16_t *h_buffer, const int32_t *gate_lut, const int16_t *exp_lut, uint32_t L,
+    uint32_t D_inner, uint32_t N, int32_t NB, int32_t output_requant_mul_q40, uint32_t D_start, uint32_t D_end) {
+  const int32_t dB_half = (NB > 0) ? (1 << (NB - 1)) : 0;
+  const int32_t exp_off = I16_RANGE_Q15 + I16_HALF_Q15;
+  for (uint32_t d = D_start; d < D_end; d++) {
+    int32_t h_l[32];
+    const int16_t *A_row = A16 + d * N;
+    int16_t *const h_row = h_buffer + d * N;
+    for (uint32_t n = 0; n < N; n++)
+      h_l[n] = h_row[n];
+    const int32_t sh_a = shA[d], sh_h = sH[d], sh_y = ysh[d], d_skip_val = D_skip[d];
+    for (uint32_t t = 0; t < L; t++) {
+      const int16_t *B_row = B16 + t * N;
+      const int16_t *C_row = C16 + t * N;
+      const int32_t x_val = x[t * D_inner + d], z_val = z[t * D_inner + d], dt_val = dt[t * D_inner + d];
+      int32_t acc = 0;
+      for (uint32_t n = 0; n < N; n++) {
+        const int32_t p = dt_val * (int32_t)A_row[n];
+        const int32_t v = (sh_a >= 0) ? (p >> sh_a) : (p << (-sh_a));
+        int32_t idx = (v + exp_off) >> 8;
+        idx = idx < 0 ? 0 : (idx > I16_LUT_MAX ? I16_LUT_MAX : idx);
+        const int32_t dA = exp_lut[idx];
+        int32_t hn = (int32_t)(((int64_t)dA * h_l[n] + (1 << 14)) >> 15);
+        const int32_t dBp = (dt_val * (int32_t)B_row[n] + dB_half) >> NB;
+        hn = _i16_clip16(hn + ((dBp * x_val) >> sh_h));
+        h_l[n] = hn;
+        acc += hn * (int32_t)C_row[n];
+      }
+      y[t * D_inner + d] = _i16_output(acc, sh_y, d_skip_val, x_val, gate_lut[z_val + 128], output_requant_mul_q40);
+    }
+    for (uint32_t n = 0; n < N; n++)
+      h_row[n] = (int16_t)h_l[n];
+  }
+}
+
 void GAP9_SelectiveScanI16_i8_i8(
     const int8_t *__restrict__ x, const int8_t *__restrict__ z,
     const int16_t *__restrict__ dt, const int32_t *__restrict__ B,
@@ -74,66 +122,49 @@ void GAP9_SelectiveScanI16_i8_i8(
   }
   pi_cl_team_barrier();
   const int32_t NB = 8 - (int32_t)bc_shift;
-  const int32_t dB_half = (NB > 0) ? (1 << (NB - 1)) : 0;
+  if (N != 16 || NB != 2) {
+    _i16_scan_generic(x, z, dt, B16, C16, A16, D_skip, shA, sH, ysh, y, h_buffer, gate_lut, exp_lut, L, D_inner, N, NB,
+                      output_requant_mul_q40, D_start, D_end);
+    pi_cl_team_barrier();
+    return;
+  }
   const int8_t *lut8 = (const int8_t *)exp_lut;
-  const int32_t exp_off = I16_RANGE_Q15 + I16_HALF_Q15;
+  /* Hot path == ssm_i16_bench v5 (844 B of code, 49.7 cyc/step on gvsoc); channels whose A needs a
+     left shift (sA > 8, rare) take the generic path so the hot loop keeps a single shift. */
   for (uint32_t d = D_start; d < D_end; d++) {
+    const int32_t sh_a = shA[d];
+    if (sh_a < 0) {
+      _i16_scan_generic(x, z, dt, B16, C16, A16, D_skip, shA, sH, ysh, y, h_buffer, gate_lut, exp_lut, L, D_inner, 16, 2,
+                        output_requant_mul_q40, d, d + 1);
+      continue;
+    }
     int32_t h_l[16];
-    const int16_t *A_row = A16 + d * N;
-    int16_t *const h_row = h_buffer + d * N;
-    for (uint32_t n = 0; n < N; n++)
+    const int16_t *A_row = A16 + d * 16;
+    int16_t *const h_row = h_buffer + d * 16;
+    for (uint32_t n = 0; n < 16; n++)
       h_l[n] = h_row[n];
     const int32_t d_skip_val = D_skip[d];
-    const int32_t sh_a = shA[d];       /* 8 - sA, may be negative */
     const int32_t sh_h = sH[d];
     const int32_t sh_y = ysh[d];
-    int32_t A_l[16];
-    for (uint32_t n = 0; n < N; n++)
-      A_l[n] = A_row[n];
+    const int32_t exp_add = (I16_RANGE_Q15 + I16_HALF_Q15) << sh_a;
+    const int32_t exp_sh = sh_a + 8;
     for (uint32_t t = 0; t < L; t++) {
-      const int16_t *B_row = B16 + t * N;
-      const int16_t *C_row = C16 + t * N;
+      const int16_t *B_row = B16 + t * 16;
+      const int16_t *C_row = C16 + t * 16;
       const int32_t x_val = (int32_t)x[t * D_inner + d];
       const int32_t z_val = (int32_t)z[t * D_inner + d];
       const int32_t dt_val = (int32_t)dt[t * D_inner + d];
       int32_t acc = 0;
-      /* dt >= 0 (softplus) and A16 <= 0  =>  dt*A16 <= 0  =>  idx <= 2560: only the lower clip is needed */
-#define I16_LANE(n, VSHIFT, DBP)                                                              \
-      do {                                                                                    \
-        const int32_t v_ = VSHIFT(dt_val * A_l[n]);                                           \
-        const int32_t idx_ = __builtin_pulp_maxsi((v_ + exp_off) >> 8, 0);                    \
-        int32_t dA_;                                                                          \
-        __asm__("p.lh %0,%1(%2)" : "=r"(dA_) : "r"(idx_ << 1), "r"(lut8));                     \
-        int32_t hn_;                                                                          \
-        __asm__("p.mulsRN %0,%1,%2,15" : "=r"(hn_) : "r"(dA_), "r"(h_l[n]));                  \
-        const int32_t dBp_ = DBP((int32_t)B_row[n]);                                          \
-        hn_ = __builtin_pulp_clip(hn_ + ((dBp_ * x_val) >> sh_h), -32768, 32767);             \
-        h_l[n] = hn_;                                                                         \
-        acc += hn_ * (int32_t)C_row[n];                                                       \
-      } while (0)
-#define I16_VR(p) ((p) >> sh_a)
-#define I16_VL(p) ((p) << sh_al)
-#define I16_DBP2(b) ({ int32_t r_; __asm__("p.mulsRN %0,%1,%2,2" : "=r"(r_) : "r"(dt_val), "r"(b)); r_; })
-#define I16_ALL(VS, DB) I16_LANE(0,VS,DB); I16_LANE(1,VS,DB); I16_LANE(2,VS,DB); I16_LANE(3,VS,DB); \
-                        I16_LANE(4,VS,DB); I16_LANE(5,VS,DB); I16_LANE(6,VS,DB); I16_LANE(7,VS,DB); \
-                        I16_LANE(8,VS,DB); I16_LANE(9,VS,DB); I16_LANE(10,VS,DB); I16_LANE(11,VS,DB); \
-                        I16_LANE(12,VS,DB); I16_LANE(13,VS,DB); I16_LANE(14,VS,DB); I16_LANE(15,VS,DB)
-      if (N == 16 && NB == 2) {
-        if (sh_a >= 0) { I16_ALL(I16_VR, I16_DBP2); }
-        else { const int32_t sh_al = -sh_a; I16_ALL(I16_VL, I16_DBP2); }
-      } else {
-        for (uint32_t n = 0; n < N; n++) {
-          const int32_t p = dt_val * A_l[n];
-          const int32_t v = (sh_a >= 0) ? (p >> sh_a) : (p << (-sh_a));
-          const int32_t idx = __builtin_pulp_maxsi((v + exp_off) >> 8, 0);
-          const int32_t dA = exp_lut[idx];
-          int32_t hn = (int32_t)(((int64_t)dA * h_l[n] + (1 << 14)) >> 15);
-          const int32_t dBp = (dt_val * (int32_t)B_row[n] + dB_half) >> NB;
-          hn = _i16_clip16(hn + ((dBp * x_val) >> sh_h));
-          h_l[n] = hn;
-          acc += hn * (int32_t)C_row[n];
-        }
-      }
+#define I16_LANE(n) do { \
+        int32_t v = __builtin_pulp_maxsi((dt_val * (int32_t)A_row[n] + exp_add) >> exp_sh, 0); \
+        int32_t dA; __asm__("p.lh %0,%1(%2)" : "=r"(dA) : "r"(v << 1), "r"(lut8)); \
+        int32_t hn; __asm__("p.mulsRN %0,%1,%2,15" : "=r"(hn) : "r"(dA), "r"(h_l[n])); \
+        int32_t dBp; __asm__("p.mulsRN %0,%1,%2,2" : "=r"(dBp) : "r"(dt_val), "r"((int32_t)B_row[n])); \
+        hn = __builtin_pulp_clip(hn + ((dBp * x_val) >> sh_h), -32768, 32767); h_l[n] = hn; \
+        acc += hn * (int32_t)C_row[n]; \
+      } while (0);
+      for (uint32_t n = 0; n < 16; n++) { I16_LANE(n) }
+#undef I16_LANE
       int64_t y_acc = (((int64_t)acc) << sh_y) >> 15;
       y_acc += (int64_t)d_skip_val * (int64_t)x_val;
       const int64_t y_gated = _i16_round_shift_i64(y_acc * (int64_t)gate_lut[z_val + 128], 13);
@@ -141,7 +172,7 @@ void GAP9_SelectiveScanI16_i8_i8(
       y_out = y_out > 127 ? 127 : (y_out < -128 ? -128 : y_out);
       y[t * D_inner + d] = (int8_t)y_out;
     }
-    for (uint32_t n = 0; n < N; n++)
+    for (uint32_t n = 0; n < 16; n++)
       h_row[n] = (int16_t)h_l[n];
   }
   pi_cl_team_barrier();
