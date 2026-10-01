@@ -403,3 +403,23 @@ void UniformRequantShift_s32_s8(int32_t *data_in, int32_t size, int32_t mul,
     data_out[chunk_stop] = out;
   }
 }
+// x -> x + 128 as uint8 == x ^ 0x80, 4 bytes per op. Used in front of NE16 (NE16UnsignedInputPass
+// emits RequantShift(mul 2, add 256, div 2) for it; the template routes that case here).
+void Xor128_s8_u8(int8_t *data_in, int32_t size, uint8_t *data_out) {
+  int8_t core_id = pi_core_id();
+  int8_t log2Core = LOG2(NUM_CORES);
+  int32_t words = size >> 2;
+  int32_t chunk = (words >> log2Core) + ((words & (NUM_CORES - 1)) != 0);
+  int32_t start = MIN(chunk * core_id, words);
+  int32_t stop = MIN(start + chunk, words);
+  const uint32_t *in = (const uint32_t *)data_in;
+  uint32_t *out = (uint32_t *)data_out;
+  for (int32_t i = start; i < stop; i++) {
+    out[i] = in[i] ^ 0x80808080u;
+  }
+  if (core_id == 0) {
+    for (int32_t i = words << 2; i < size; i++) {
+      data_out[i] = (uint8_t)data_in[i] ^ 0x80;
+    }
+  }
+}

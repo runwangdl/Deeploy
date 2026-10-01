@@ -61,5 +61,10 @@ add_int_immediate = int(add_immediate)
 %>
 
 // UniformRequantShift (Name: ${nodeName}, Op: ${nodeOp})
+% if inSignage == "s" and outSignage == "u" and data_in_type.referencedType.typeWidth == 8 and data_out_type.referencedType.typeWidth == 8 and mul_int_immediate == 2 and add_int_immediate == 256 and str(log2Dstring) == "1":
+// (2x + 256 + 1) >> 1 == x + 128 == x ^ 0x80 for int8 x: NE16 unsigned-input shift, 4 bytes per op
+Xor128_s8_u8(${data_in}, ${size}, ${data_out});
+% else:
 UniformRequantShift_${inSignage}${data_in_type.referencedType.typeWidth}_${outSignage}${data_out_type.referencedType.typeWidth}(${data_in}, ${size}, ${mul_int_immediate}, ${add_int_immediate}, ${data_out}, ${log2Dstring}, ${channel_width}, 0, 0 , ${output_min}, ${output_max}, 1);
+% endif
 """)
