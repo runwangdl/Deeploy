@@ -1,0 +1,47 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.Generic.Layers.SILULayer
+========================================
+
+.. currentmodule:: Deeploy.Targets.Generic.Layers
+
+.. autoclass:: SILULayer
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~SILULayer.__init__
+      ~SILULayer.bind
+      ~SILULayer.broadcast
+      ~SILULayer.codeTransform
+      ~SILULayer.computeOps
+      ~SILULayer.computeShapes
+      ~SILULayer.discardCurrentMapper
+      ~SILULayer.generate
+      ~SILULayer.parse
+      ~SILULayer.resetDiscardedMappers
+      ~SILULayer.typeCheck
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~SILULayer.maps
+      ~SILULayer.mapper
+      ~SILULayer.discardedMappers
+      ~SILULayer.node
+   
+   

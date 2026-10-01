@@ -1,0 +1,33 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.GAP9.Templates.Mamba3ScanTemplate.GAP9Mamba3ScanTemplate
+========================================================================
+
+.. currentmodule:: Deeploy.Targets.GAP9.Templates.Mamba3ScanTemplate
+
+.. autoclass:: GAP9Mamba3ScanTemplate
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~GAP9Mamba3ScanTemplate.__init__
+      ~GAP9Mamba3ScanTemplate.alignToContext
+      ~GAP9Mamba3ScanTemplate.computeTransientBuffersSize
+      ~GAP9Mamba3ScanTemplate.generate
+      ~GAP9Mamba3ScanTemplate.hoistTransientBuffers
+      ~GAP9Mamba3ScanTemplate.internalSize
+   
+   
+
+   
+   
+   

@@ -1,0 +1,41 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.NE16.Bindings.NE16RQSConvChecker
+================================================
+
+.. currentmodule:: Deeploy.Targets.NE16.Bindings
+
+.. autoclass:: NE16RQSConvChecker
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~NE16RQSConvChecker.__init__
+      ~NE16RQSConvChecker.annotateDict
+      ~NE16RQSConvChecker.checkOutputType
+      ~NE16RQSConvChecker.signature
+      ~NE16RQSConvChecker.typeCheck
+      ~NE16RQSConvChecker.typeCheckNodeInputs
+      ~NE16RQSConvChecker.typeInferGlobalCtxt
+      ~NE16RQSConvChecker.typeInferOutput
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~NE16RQSConvChecker.typeDict
+   
+   

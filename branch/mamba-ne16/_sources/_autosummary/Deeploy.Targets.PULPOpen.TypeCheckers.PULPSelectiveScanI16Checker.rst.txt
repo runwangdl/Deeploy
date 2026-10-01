@@ -1,0 +1,41 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.TypeCheckers.PULPSelectiveScanI16Checker
+=================================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.TypeCheckers
+
+.. autoclass:: PULPSelectiveScanI16Checker
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~PULPSelectiveScanI16Checker.__init__
+      ~PULPSelectiveScanI16Checker.annotateDict
+      ~PULPSelectiveScanI16Checker.checkOutputType
+      ~PULPSelectiveScanI16Checker.signature
+      ~PULPSelectiveScanI16Checker.typeCheck
+      ~PULPSelectiveScanI16Checker.typeCheckNodeInputs
+      ~PULPSelectiveScanI16Checker.typeInferGlobalCtxt
+      ~PULPSelectiveScanI16Checker.typeInferOutput
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~PULPSelectiveScanI16Checker.typeDict
+   
+   

@@ -1,0 +1,43 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.GAP9.Templates
+==============================
+
+.. automodule:: Deeploy.Targets.GAP9.Templates
+
+   
+   
+   
+
+   
+   
+   
+
+   
+   
+   
+
+   
+   
+   
+
+
+
+.. rubric:: Modules
+
+.. autosummary::
+   :toctree:
+   :template: custom-module-template.rst
+   :recursive:
+
+   AllocateTemplate
+   FreeTemplate
+   GAP9SDKDequantQuantTemplate
+   Mamba3ScanTemplate
+   NE16GEMMTemplate
+   SSDScanTemplate
+   SelectiveScanI16Template
+   SelectiveScanTemplate
+

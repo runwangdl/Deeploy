@@ -1,0 +1,41 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.Generic.TypeCheckers.SILUChecker
+================================================
+
+.. currentmodule:: Deeploy.Targets.Generic.TypeCheckers
+
+.. autoclass:: SILUChecker
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~SILUChecker.__init__
+      ~SILUChecker.annotateDict
+      ~SILUChecker.checkOutputType
+      ~SILUChecker.signature
+      ~SILUChecker.typeCheck
+      ~SILUChecker.typeCheckNodeInputs
+      ~SILUChecker.typeInferGlobalCtxt
+      ~SILUChecker.typeInferOutput
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~SILUChecker.typeDict
+   
+   
