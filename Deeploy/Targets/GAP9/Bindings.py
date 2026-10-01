@@ -337,6 +337,12 @@ GAP9UniformRQSBindings = [
         PULPRequantShiftChecker([PointerClass(type), PointerClass(int32_t),
                                  PointerClass(int32_t)], [PointerClass(int8_t)]),
         UniformRequantShiftTemplate.referenceTemplate, GAP9Transformer) for type in IntegerDataTypes
+] + [
+    # int8 -> uint8 re-bias in front of NE16 (UniformRequantShift_s8_u8)
+    NodeBinding(
+        PULPRequantShiftChecker([PointerClass(int8_t), PointerClass(int32_t),
+                                 PointerClass(int32_t)], [PointerClass(uint8_t)]),
+        UniformRequantShiftTemplate.referenceTemplate, GAP9Transformer)
 ]
 
 GAP9RQSBindings = [

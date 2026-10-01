@@ -47,13 +47,13 @@ void RequantShift_s32_s8_NHWC(int32_t *data_in, int32_t size, int32_t *mul,
                               int32_t channels, int32_t input_offset,
                               int32_t output_offset, int8_t output_min,
                               int8_t output_max, bool rounding) {
-  int32_t intermediate;
+  int64_t intermediate;  /* 64-bit: int32 acc * mul overflows for FEMBA-scale requants */
   int8_t out;
   for (int i = 0; i < size; i++) {
-    intermediate = ((int32_t)data_in[i] + input_offset) * mul[i % channels] +
+    intermediate = ((int64_t)data_in[i] + input_offset) * mul[i % channels] +
                    add[i % channels];
     if (rounding && log2D > 0)
-      intermediate += 1 << (log2D - 1);
+      intermediate += (int64_t)1 << (log2D - 1);
     intermediate = (intermediate >> log2D) + output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -112,7 +112,7 @@ void RequantShift_s32_s8_NCHW(int32_t *data_in, int32_t size, int32_t *mul,
                               int32_t HW, int32_t input_offset,
                               int32_t output_offset, int8_t output_min,
                               int8_t output_max, bool rounding) {
-  int32_t intermediate;
+  int64_t intermediate;  /* 64-bit: int32 acc * mul overflows for FEMBA-scale requants */
   int8_t out;
   for (int i = 0; i < size; i++) {
     intermediate = (int32_t)data_in[i];
@@ -128,7 +128,7 @@ void RequantShift_s32_s8_NCHW(int32_t *data_in, int32_t size, int32_t *mul,
 
     intermediate = (intermediate + input_offset) * mul[i / HW] + add[i / HW];
     if (rounding && log2D > 0)
-      intermediate += 1 << (log2D - 1);
+      intermediate += (int64_t)1 << (log2D - 1);
     intermediate = (intermediate >> log2D) + output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;

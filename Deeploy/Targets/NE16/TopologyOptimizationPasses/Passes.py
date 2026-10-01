@@ -338,12 +338,13 @@ def _ne16_unsigned_input_fun(graph: gs.Graph, match: Match, name: str, ne16Engin
                 name = f"{name}_to_u8",
                 inputs = [
                     x,
-                    # per-channel vectors on purpose: the uniform (scalar) RequantShift has no
-                    # uint8-output kernel on PULP, the per-channel one (RequantShift_s8_u8_NHWC) has
+                    # scalar mul/add: the uniform kernel is the 8-core one (the per-channel
+                    # RequantShift_s8_u8_NHWC is a single-core loop with a modulo per element,
+                    # 5.2 M cycles per FEMBA projection input)
                     # (2x + 256 + 1) >> 1 == x + 128 exactly; div 2 instead of 1 because the
                     # RequantShift kernels' rounding term is 1 << (log2D - 1), undefined at log2D 0
-                    gs.Constant(f"{name}_u8_mul", np.full(int(x.shape[-1]), 2, dtype = np.int32)),
-                    gs.Constant(f"{name}_u8_add", np.full(int(x.shape[-1]), 256, dtype = np.int32))
+                    gs.Constant(f"{name}_u8_mul", np.array([2], dtype = np.int32)),
+                    gs.Constant(f"{name}_u8_add", np.array([256], dtype = np.int32))
                 ],
                 outputs = [x_u],
                 attrs = {
