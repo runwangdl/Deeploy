@@ -179,49 +179,8 @@ pulp_nn_conv${signatureString}(${data_in}, ${ctxtBuffer}, NULL, ${data_out}, ${w
 """)
 
 PULPDWConv1D_8_Template = PULP1DDWConvTemplate("""
-// PULP NN CONV
-<%
-signatureString = ''
-if input_signed:
-    signatureString += '_i8'
-else:
-    signatureString += '_u8'
-if output_signed:
-    signatureString += '_i8'
-else:
-    signatureString += '_u8'
-if weight_signed:
-    signatureString += '_i8'
-else:
-    signatureString += '_u8'
-%>
-pulp_nn_depthwise${signatureString}(${data_in}, ${ctxtBuffer}, NULL, ${data_out}, ${weight}, NULL, ${mul}, ${add}, 1, ${log2D}, 1, ${dim_im_in_y}, ${ch_im_in}, 1, ${dim_im_out_y}, ${ch_im_out}, 1, ${dim_kernel_y}, ${padding_y_top}, ${padding_y_bottom}, 0, 0, 1, ${stride_y}, 1, 1);
-// The prebuilt pulp-nn depthwise kernel gets the outputs that overlap the top (causal) padding
-// wrong by +-1/+-2 (FEMBA's conv1d, pads [3, 0]: t = 0, 1 of every channel; the same conv with
-// the zeros padded explicitly is exact). Recompute those outputs here: the kernel reads the
-// input as [C][L] (i_in_ch = c * L) and writes the output as [L][C] (pOut + c + l * ch_out).
-// In a tiled model the same off-by-one shows up at the first two outputs of every inner L
-// tile as well (no padding there, halo rows present: FEMBA K17 prefix, t = 29, 30, 58, 59),
-// so the first (kernel - 1) outputs of every tile are recomputed.
-{
-  pi_cl_team_barrier();
-  const int32_t _nfix = ${dim_kernel_y} - 1;
-  const uint32_t _dwc = ${ch_im_out};
-  const uint32_t _chunk = (_dwc + NUM_CORES - 1) / NUM_CORES;
-  const uint32_t _c0 = pi_core_id() * _chunk;
-  const uint32_t _c1 = (_c0 + _chunk < _dwc) ? _c0 + _chunk : _dwc;
-  for (uint32_t _c = _c0; _c < _c1; _c++) {
-    for (int32_t _t = 0; _t < _nfix && _t < ${dim_im_out_y}; _t++) {
-      int32_t _sum = 0;
-      for (int32_t _r = 0; _r < ${dim_kernel_y}; _r++) {
-        const int32_t _ti = _t * ${stride_y} + _r - ${padding_y_top};
-        if (_ti >= 0 && _ti < ${dim_im_in_y})
-          _sum += (int32_t)${data_in}[_c * ${dim_im_in_y} + _ti] * (int32_t)${weight}[_c * ${dim_kernel_y} + _r];
-      }
-      int64_t _v = ((int64_t)_sum * (int64_t)${mul}[_c] + (int64_t)${add}[_c]) >> ${log2D};
-      ${data_out}[_t * ${ch_im_out} + _c] = (int8_t)(_v > 127 ? 127 : (_v < -128 ? -128 : _v));  /* pulp-nn writes [L][C] */
-    }
-  }
-  pi_cl_team_barrier();
-}
+// Depthwise Conv1D + requant (fused), channels-first input, [L][C] output
+// (PULP_DWConv1D_s8_s8_rq replaces pulp_nn_depthwise: the prebuilt pulp-nn kernel is off by one
+// at the first kernel-1 outputs of every tile and its int32 requant overflows for FEMBA scales)
+PULP_DWConv1D_s8_s8_rq(${data_in}, ${weight}, ${mul}, ${add}, ${data_out}, ${ch_im_out}, ${dim_im_in_y}, ${dim_im_out_y}, ${dim_kernel_y}, ${padding_y_top}, ${stride_y}, ${log2D});
 """)

@@ -35,4 +35,10 @@ void PULP_DW_Conv2d_Im2Col_fp32_fp32_fp32_HWC(
     uint32_t pad_left, uint32_t pad_right,
     float32_t *__restrict__ pContextBuffer);
 
+
+void PULP_DWConv1D_s8_s8_rq(const int8_t *__restrict__ in, const int8_t *__restrict__ w,
+                            const int32_t *__restrict__ mul, const int32_t *__restrict__ add,
+                            int8_t *__restrict__ out, uint32_t C, uint32_t L_in, uint32_t L_out,
+                            uint32_t K, uint32_t pad_top, uint32_t stride, uint32_t log2D);
+
 #endif // __DEEPLOY_MATH_CONV_KERNEL_HEADER_
