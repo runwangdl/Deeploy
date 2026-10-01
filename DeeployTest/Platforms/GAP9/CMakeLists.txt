@@ -34,7 +34,17 @@ endif()
 # FEMBA model from 288M to 180M cycles). CC_STACK_SIZE sizes the cluster
 # controller / master stack, which also lives in L1.
 # Example: cmake ... -DSLAVESTACKSIZE=768 -DCC_STACK_SIZE=4098
+# Also honour the environment, because the test runners do not forward -D to CMake.
+# SelectiveScan is happy at the 768 B default; SSDScan needs >= 1024 because it keeps
+# dB_chunk[Chunk_size * N] and five more Chunk_size arrays on the stack (736 B at
+# Chunk_size=8, and it grows linearly with Chunk_size). Below that it writes past the
+# stack into the address space under L1 and gvsoc reports an invalid access at
+# offset 0x0fffffxx.
+if(NOT SLAVESTACKSIZE AND DEFINED ENV{SLAVESTACKSIZE})
+  set(SLAVESTACKSIZE $ENV{SLAVESTACKSIZE})
+endif()
 if(SLAVESTACKSIZE)
+  message(STATUS "[Deeploy GAP9] SLAVESTACKSIZE=${SLAVESTACKSIZE} B/core")
   target_compile_definitions(${ProjectId} PRIVATE SLAVESTACKSIZE=${SLAVESTACKSIZE})
 endif()
 

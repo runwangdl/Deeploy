@@ -83,6 +83,37 @@ class NE16PWConv2DTileConstraint(TileConstraint):
         strides = parseDict["strides"]
         padding = parseDict["pads"]
 
+        # Tile the larger tensor first.
+        #
+        # A pointwise convolution that came out of a GEMM (RequantizedGemmToPwPass, then
+        # NE16's reshape pass, which factors M into the two spatial dims to minimise 3x3
+        # subtiles) has a weight tensor far larger than its activations. FEMBA's input
+        # projection is the extreme case: [1,16,5,385] in, 3080 out channels, so 1.19 MB
+        # of weights against 30.8 kB of activations.
+        #
+        # Without a hint the solver splits the spatial dims as well - measured on that
+        # node: H 16 -> 15+1, W 5 -> 3+2, i.e. four spatial tiles - and every channel
+        # chunk of weights is then re-fetched once per spatial tile. Weight traffic goes
+        # from 1.19 MB to about 4.7 MB, the tile count from ~20 to 80, and 59.3% of the
+        # node's cycles end up in pre/post-kernel rather than in the accelerator. The
+        # software path on the same GEMM keeps M whole, splits only N, and loads the
+        # weights once.
+        #
+        # So when the weights dominate, ask for the spatial dims to stay whole at a
+        # higher priority than the channel hints below. These are PerformanceHints, so
+        # the solver drops them if they make the problem infeasible, and a conv whose
+        # activations dominate (a normal feature-map layer) is unaffected.
+        spatialExtent = parseDict["dim_im_out_x"] * parseDict["dim_im_out_y"]
+        activationVolume = spatialExtent * (parseDict["ch_im_in"] + parseDict["ch_im_out"])
+        weightVolume = (parseDict["ch_im_in"] * parseDict["ch_im_out"] * parseDict["dim_kernel_x"] *
+                        parseDict["dim_kernel_y"])
+
+        if weightVolume > activationVolume:
+            tilerModel.addConstraint(outputHeightVar == outputHeightVar.Max(),
+                                     strategy = PerformanceHint(priority = 5))
+            tilerModel.addConstraint(outputWidthVar == outputWidthVar.Max(),
+                                     strategy = PerformanceHint(priority = 4))
+
         # LMACAN: Force full input channel to avoid partial results
         tilerModel.addConstraint(inputChannelVar == inputChannelVar.Max())
         tilerModel.addConstraint(weightInChannelMajorVar == weightInChannelMajorVar.Max())
@@ -192,6 +223,13 @@ class NE16PWConv2DTileConstraint(TileConstraint):
 
         outputBuffer = ctxt.lookup(varOut)
         assert isinstance(outputBuffer, VariableBuffer)
+
+        import os as _os
+        if _os.environ.get("DEEPLOY_DUMP_PW_TILES"):
+            _d = [c.dims for c in outputCubes]
+            print(f"[PW-TILES] {operatorRepresentation.get('nodeName', varOut)} "
+                  f"outShape={outputBuffer.shape} nTiles={len(_d)} "
+                  f"uniqueDims={sorted(set(_d))}", flush = True)
 
         for cube in outputCubes:
             (BatchOffset, HOffset, WOffset, COffset) = cube.offset
