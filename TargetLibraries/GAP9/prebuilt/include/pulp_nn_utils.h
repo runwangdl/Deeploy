@@ -111,8 +111,8 @@ pulp_nn_quant_u2(int32_t phi, int16_t m, int8_t d) {
 }
 static uint8_t __attribute__((noinline))
 pulp_nn_bn_quant_u2(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
-  int32_t integer_image_phi = (k * phi) + lambda;
-  int32_t x = (integer_image_phi) >> d;
+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+  int32_t x = (int32_t) (integer_image_phi >> d);
   uint8_t res = clip2(x);
   return res;
 }
@@ -133,8 +133,8 @@ pulp_nn_quant_i2(int32_t phi, int16_t m, int8_t d) {
 }
 static int8_t __attribute__((noinline))
 pulp_nn_bn_quant_i2(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
-  int32_t integer_image_phi = (k * phi) + lambda;
-  int32_t x = (integer_image_phi) >> d;
+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+  int32_t x = (int32_t) (integer_image_phi >> d);
   int8_t res = clips2(x);
   return res;
 }
@@ -155,8 +155,8 @@ pulp_nn_quant_u4(int32_t phi, int16_t m, int8_t d) {
 }
 static uint8_t __attribute__((noinline))
 pulp_nn_bn_quant_u4(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
-  int32_t integer_image_phi = (k * phi) + lambda;
-  int32_t x = (integer_image_phi) >> d;
+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+  int32_t x = (int32_t) (integer_image_phi >> d);
   uint8_t res = clip4(x);
   return res;
 }
@@ -177,8 +177,8 @@ pulp_nn_quant_i4(int32_t phi, int16_t m, int8_t d) {
 }
 static int8_t __attribute__((noinline))
 pulp_nn_bn_quant_i4(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
-  int32_t integer_image_phi = (k * phi) + lambda;
-  int32_t x = (integer_image_phi) >> d;
+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+  int32_t x = (int32_t) (integer_image_phi >> d);
   int8_t res = clips4(x);
   return res;
 }
@@ -199,8 +199,8 @@ pulp_nn_quant_u8(int32_t phi, int16_t m, int8_t d) {
 }
 static uint8_t __attribute__((noinline))
 pulp_nn_bn_quant_u8(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
-  int32_t integer_image_phi = (k * phi) + lambda;
-  int32_t x = (integer_image_phi) >> d;
+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+  int32_t x = (int32_t) (integer_image_phi >> d);
   uint8_t res = clip8(x);
   return res;
 }
@@ -221,8 +221,8 @@ pulp_nn_quant_i8(int32_t phi, int16_t m, int8_t d) {
 }
 static int8_t __attribute__((noinline))
 pulp_nn_bn_quant_i8(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
-  int32_t integer_image_phi = (k * phi) + lambda;
-  int32_t x = (integer_image_phi) >> d;
+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+  int32_t x = (int32_t) (integer_image_phi >> d);
   int8_t res = clips8(x);
   return res;
 }
