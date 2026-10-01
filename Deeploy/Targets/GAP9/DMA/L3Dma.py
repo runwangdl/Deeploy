@@ -10,19 +10,28 @@ from Deeploy.TilingExtension.AsyncDma import AsyncDma, BlockingDmaFromAsyncDmaAd
     Future, PerTensorWaitingStrategy
 
 
+# In-flight pi_cl_ram_copy requests per tensor/direction; a transfer loop longer than this
+# flushes before continuing. Measured on gvsoc (XProj128_i32, DB): 1 slot 231.7k cycles, 2 slots
+# 186.8k, 3 slots 175.9k, 4+ slots hang in the hyperbus path. The C macro of the same name in
+# TargetLibraries/GAP9/inc/dory_mem.h must match.
+GAP9_L3_REQ_SLOTS = 3
+
+
 class GAP9L3DmaFuture(Future):
 
-    _initTemplate = NodeTemplate("pi_cl_ram_req_t ${name} = {0};")
+    # One request slot per in-flight copy: a tensor whose tile is a 3-D rectangle is
+    # expanded into shape[0] separate pi_cl_ram_copy_2d calls before the single wait
+    # (NE16 int32 outputs: up to 15 per tile). Sharing one pi_cl_ram_req_t between
+    # them corrupts the PMSIS request list and silently drops copies (FEMBA NE16 DB).
+    _initTemplate = NodeTemplate("static pi_cl_ram_req_t ${name}[GAP9_L3_REQ_SLOTS]; uint32_t ${name}_n = 0;")
 
     _deinitTemplate = NodeTemplate("")
 
     _allocTemplate = NodeTemplate("")
 
     _waitTemplate = NodeTemplate("""
-    if (${name}.size != 0) {
-        pi_cl_ram_copy_wait(&${name});
-        ${name}.size = 0;
-    }""")
+    for (uint32_t _r = 0; _r < ${name}_n; _r++) pi_cl_ram_copy_wait(&${name}[_r]);
+    ${name}_n = 0;""")
 
 
 class GAP9L3Dma(AsyncDma):
@@ -30,7 +39,8 @@ class GAP9L3Dma(AsyncDma):
     _transferTemplates = {
         2:
             NodeTemplate(
-                "pi_cl_ram_copy_2d(get_ram_ptr(), (uint32_t)${ext}, (void *)${loc}, (uint32_t)${transfer_size}, (uint32_t)${stride}, (uint32_t)${length}, ${ext2loc}, &${future});"
+                """if (${future}_n == GAP9_L3_REQ_SLOTS) { for (uint32_t _r = 0; _r < ${future}_n; _r++) pi_cl_ram_copy_wait(&${future}[_r]); ${future}_n = 0; }
+pi_cl_ram_copy_2d(get_ram_ptr(), (uint32_t)${ext}, (void *)${loc}, (uint32_t)${transfer_size}, (uint32_t)${stride}, (uint32_t)${length}, ${ext2loc}, &${future}[${future}_n++]);"""
             )
     }
     _waitingStrategy = PerTensorWaitingStrategy(GAP9L3DmaFuture)
