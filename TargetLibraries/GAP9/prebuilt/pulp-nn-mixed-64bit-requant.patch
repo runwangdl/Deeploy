@@ -1,112 +1,120 @@
-diff --git a/TargetLibraries/GAP9/prebuilt/include/pulp_nn_utils.h b/TargetLibraries/GAP9/prebuilt/include/pulp_nn_utils.h
-index 0aaa2935..aab6eb1f 100644
---- a/TargetLibraries/GAP9/prebuilt/include/pulp_nn_utils.h
-+++ b/TargetLibraries/GAP9/prebuilt/include/pulp_nn_utils.h
-@@ -111,8 +111,8 @@ pulp_nn_quant_u2(int32_t phi, int16_t m, int8_t d) {
- }
- static uint8_t __attribute__((noinline))
- pulp_nn_bn_quant_u2(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
--  int32_t integer_image_phi = (k * phi) + lambda;
--  int32_t x = (integer_image_phi) >> d;
-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
-+  int32_t x = (int32_t) (integer_image_phi >> d);
-   uint8_t res = clip2(x);
-   return res;
- }
-@@ -133,8 +133,8 @@ pulp_nn_quant_i2(int32_t phi, int16_t m, int8_t d) {
- }
- static int8_t __attribute__((noinline))
- pulp_nn_bn_quant_i2(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
--  int32_t integer_image_phi = (k * phi) + lambda;
--  int32_t x = (integer_image_phi) >> d;
-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
-+  int32_t x = (int32_t) (integer_image_phi >> d);
-   int8_t res = clips2(x);
-   return res;
- }
-@@ -155,8 +155,8 @@ pulp_nn_quant_u4(int32_t phi, int16_t m, int8_t d) {
- }
- static uint8_t __attribute__((noinline))
- pulp_nn_bn_quant_u4(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
--  int32_t integer_image_phi = (k * phi) + lambda;
--  int32_t x = (integer_image_phi) >> d;
-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
-+  int32_t x = (int32_t) (integer_image_phi >> d);
-   uint8_t res = clip4(x);
-   return res;
- }
-@@ -177,8 +177,8 @@ pulp_nn_quant_i4(int32_t phi, int16_t m, int8_t d) {
- }
- static int8_t __attribute__((noinline))
- pulp_nn_bn_quant_i4(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
--  int32_t integer_image_phi = (k * phi) + lambda;
--  int32_t x = (integer_image_phi) >> d;
-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
-+  int32_t x = (int32_t) (integer_image_phi >> d);
-   int8_t res = clips4(x);
-   return res;
- }
-@@ -199,8 +199,8 @@ pulp_nn_quant_u8(int32_t phi, int16_t m, int8_t d) {
- }
- static uint8_t __attribute__((noinline))
- pulp_nn_bn_quant_u8(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
--  int32_t integer_image_phi = (k * phi) + lambda;
--  int32_t x = (integer_image_phi) >> d;
-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
-+  int32_t x = (int32_t) (integer_image_phi >> d);
-   uint8_t res = clip8(x);
-   return res;
- }
-@@ -221,8 +221,8 @@ pulp_nn_quant_i8(int32_t phi, int16_t m, int8_t d) {
- }
- static int8_t __attribute__((noinline))
- pulp_nn_bn_quant_i8(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
--  int32_t integer_image_phi = (k * phi) + lambda;
--  int32_t x = (integer_image_phi) >> d;
-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
-+  int32_t x = (int32_t) (integer_image_phi >> d);
-   int8_t res = clips8(x);
-   return res;
- }
 diff --git a/TargetLibraries/GAP9/prebuilt/libpulp-nn-mixed.a b/TargetLibraries/GAP9/prebuilt/libpulp-nn-mixed.a
-index d63369b6..07c806ce 100644
+index 07c806ce..41c080f4 100644
 Binary files a/TargetLibraries/GAP9/prebuilt/libpulp-nn-mixed.a and b/TargetLibraries/GAP9/prebuilt/libpulp-nn-mixed.a differ
-diff --git a/TargetLibraries/PULPOpen/src/UniformRequantShift.c b/TargetLibraries/PULPOpen/src/UniformRequantShift.c
-index c51f8967..f0338992 100644
---- a/TargetLibraries/PULPOpen/src/UniformRequantShift.c
-+++ b/TargetLibraries/PULPOpen/src/UniformRequantShift.c
-@@ -298,7 +298,7 @@ void UniformRequantShift_s32_s32(int32_t *data_in, int32_t size, int32_t mul,
-     reg_data_in_B = data_in[halfChunkSize + i];
- 
-     // Compute i
--    intermediate = (int64_t)(reg_data_in_A + input_offset) * mul + add;
-+    intermediate = ((int64_t)reg_data_in_A + input_offset) * mul + add;
-     intermediate =
-         ((intermediate + (((int64_t)1 << (log2D - 1)) * rounding)) >> log2D) +
-         output_offset;
-@@ -309,7 +309,7 @@ void UniformRequantShift_s32_s32(int32_t *data_in, int32_t size, int32_t mul,
-     reg_data_in_A = data_in[i + 1];
- 
-     // Compute step halfChunkSize + i
--    intermediate = (int64_t)(reg_data_in_B + input_offset) * mul + add;
-+    intermediate = ((int64_t)reg_data_in_B + input_offset) * mul + add;
-     intermediate =
-         ((intermediate + (((int64_t)1 << (log2D - 1)) * rounding)) >> log2D) +
-         output_offset;
-@@ -323,14 +323,14 @@ void UniformRequantShift_s32_s32(int32_t *data_in, int32_t size, int32_t mul,
-     reg_data_in_B = data_in[chunk_stop - 1];
-     reg_data_in_A = data_in[chunk_stop];
- 
--    intermediate = (int64_t)(reg_data_in_B + input_offset) * mul + add;
-+    intermediate = ((int64_t)reg_data_in_B + input_offset) * mul + add;
-     intermediate =
-         ((intermediate + (((int64_t)1 << (log2D - 1)) * rounding)) >> log2D) +
-         output_offset;
-     out = (int32_t)CLAMP(intermediate, output_min, output_max);
-     data_out[chunk_stop - 1] = out;
- 
--    intermediate = (int64_t)(reg_data_in_A + input_offset) * mul + add;
-+    intermediate = ((int64_t)reg_data_in_A + input_offset) * mul + add;
-     intermediate =
-         ((intermediate + (((int64_t)1 << (log2D - 1)) * rounding)) >> log2D) +
-         output_offset;
+diff --git a/TargetLibraries/GAP9/prebuilt/pulp-nn-mixed-64bit-requant.patch b/TargetLibraries/GAP9/prebuilt/pulp-nn-mixed-64bit-requant.patch
+index aa3d463a..e69de29b 100644
+--- a/TargetLibraries/GAP9/prebuilt/pulp-nn-mixed-64bit-requant.patch
++++ b/TargetLibraries/GAP9/prebuilt/pulp-nn-mixed-64bit-requant.patch
+@@ -1,112 +0,0 @@
+-diff --git a/TargetLibraries/GAP9/prebuilt/include/pulp_nn_utils.h b/TargetLibraries/GAP9/prebuilt/include/pulp_nn_utils.h
+-index 0aaa2935..aab6eb1f 100644
+---- a/TargetLibraries/GAP9/prebuilt/include/pulp_nn_utils.h
+-+++ b/TargetLibraries/GAP9/prebuilt/include/pulp_nn_utils.h
+-@@ -111,8 +111,8 @@ pulp_nn_quant_u2(int32_t phi, int16_t m, int8_t d) {
+- }
+- static uint8_t __attribute__((noinline))
+- pulp_nn_bn_quant_u2(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
+--  int32_t integer_image_phi = (k * phi) + lambda;
+--  int32_t x = (integer_image_phi) >> d;
+-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+-+  int32_t x = (int32_t) (integer_image_phi >> d);
+-   uint8_t res = clip2(x);
+-   return res;
+- }
+-@@ -133,8 +133,8 @@ pulp_nn_quant_i2(int32_t phi, int16_t m, int8_t d) {
+- }
+- static int8_t __attribute__((noinline))
+- pulp_nn_bn_quant_i2(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
+--  int32_t integer_image_phi = (k * phi) + lambda;
+--  int32_t x = (integer_image_phi) >> d;
+-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+-+  int32_t x = (int32_t) (integer_image_phi >> d);
+-   int8_t res = clips2(x);
+-   return res;
+- }
+-@@ -155,8 +155,8 @@ pulp_nn_quant_u4(int32_t phi, int16_t m, int8_t d) {
+- }
+- static uint8_t __attribute__((noinline))
+- pulp_nn_bn_quant_u4(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
+--  int32_t integer_image_phi = (k * phi) + lambda;
+--  int32_t x = (integer_image_phi) >> d;
+-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+-+  int32_t x = (int32_t) (integer_image_phi >> d);
+-   uint8_t res = clip4(x);
+-   return res;
+- }
+-@@ -177,8 +177,8 @@ pulp_nn_quant_i4(int32_t phi, int16_t m, int8_t d) {
+- }
+- static int8_t __attribute__((noinline))
+- pulp_nn_bn_quant_i4(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
+--  int32_t integer_image_phi = (k * phi) + lambda;
+--  int32_t x = (integer_image_phi) >> d;
+-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+-+  int32_t x = (int32_t) (integer_image_phi >> d);
+-   int8_t res = clips4(x);
+-   return res;
+- }
+-@@ -199,8 +199,8 @@ pulp_nn_quant_u8(int32_t phi, int16_t m, int8_t d) {
+- }
+- static uint8_t __attribute__((noinline))
+- pulp_nn_bn_quant_u8(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
+--  int32_t integer_image_phi = (k * phi) + lambda;
+--  int32_t x = (integer_image_phi) >> d;
+-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+-+  int32_t x = (int32_t) (integer_image_phi >> d);
+-   uint8_t res = clip8(x);
+-   return res;
+- }
+-@@ -221,8 +221,8 @@ pulp_nn_quant_i8(int32_t phi, int16_t m, int8_t d) {
+- }
+- static int8_t __attribute__((noinline))
+- pulp_nn_bn_quant_i8(int32_t phi, int32_t k, int32_t lambda, int8_t d) {
+--  int32_t integer_image_phi = (k * phi) + lambda;
+--  int32_t x = (integer_image_phi) >> d;
+-+  int64_t integer_image_phi = ((int64_t) k * phi) + lambda; /* Deeploy: 64-bit requant */
+-+  int32_t x = (int32_t) (integer_image_phi >> d);
+-   int8_t res = clips8(x);
+-   return res;
+- }
+-diff --git a/TargetLibraries/GAP9/prebuilt/libpulp-nn-mixed.a b/TargetLibraries/GAP9/prebuilt/libpulp-nn-mixed.a
+-index d63369b6..07c806ce 100644
+-Binary files a/TargetLibraries/GAP9/prebuilt/libpulp-nn-mixed.a and b/TargetLibraries/GAP9/prebuilt/libpulp-nn-mixed.a differ
+-diff --git a/TargetLibraries/PULPOpen/src/UniformRequantShift.c b/TargetLibraries/PULPOpen/src/UniformRequantShift.c
+-index c51f8967..f0338992 100644
+---- a/TargetLibraries/PULPOpen/src/UniformRequantShift.c
+-+++ b/TargetLibraries/PULPOpen/src/UniformRequantShift.c
+-@@ -298,7 +298,7 @@ void UniformRequantShift_s32_s32(int32_t *data_in, int32_t size, int32_t mul,
+-     reg_data_in_B = data_in[halfChunkSize + i];
+- 
+-     // Compute i
+--    intermediate = (int64_t)(reg_data_in_A + input_offset) * mul + add;
+-+    intermediate = ((int64_t)reg_data_in_A + input_offset) * mul + add;
+-     intermediate =
+-         ((intermediate + (((int64_t)1 << (log2D - 1)) * rounding)) >> log2D) +
+-         output_offset;
+-@@ -309,7 +309,7 @@ void UniformRequantShift_s32_s32(int32_t *data_in, int32_t size, int32_t mul,
+-     reg_data_in_A = data_in[i + 1];
+- 
+-     // Compute step halfChunkSize + i
+--    intermediate = (int64_t)(reg_data_in_B + input_offset) * mul + add;
+-+    intermediate = ((int64_t)reg_data_in_B + input_offset) * mul + add;
+-     intermediate =
+-         ((intermediate + (((int64_t)1 << (log2D - 1)) * rounding)) >> log2D) +
+-         output_offset;
+-@@ -323,14 +323,14 @@ void UniformRequantShift_s32_s32(int32_t *data_in, int32_t size, int32_t mul,
+-     reg_data_in_B = data_in[chunk_stop - 1];
+-     reg_data_in_A = data_in[chunk_stop];
+- 
+--    intermediate = (int64_t)(reg_data_in_B + input_offset) * mul + add;
+-+    intermediate = ((int64_t)reg_data_in_B + input_offset) * mul + add;
+-     intermediate =
+-         ((intermediate + (((int64_t)1 << (log2D - 1)) * rounding)) >> log2D) +
+-         output_offset;
+-     out = (int32_t)CLAMP(intermediate, output_min, output_max);
+-     data_out[chunk_stop - 1] = out;
+- 
+--    intermediate = (int64_t)(reg_data_in_A + input_offset) * mul + add;
+-+    intermediate = ((int64_t)reg_data_in_A + input_offset) * mul + add;
+-     intermediate =
+-         ((intermediate + (((int64_t)1 << (log2D - 1)) * rounding)) >> log2D) +
+-         output_offset;
