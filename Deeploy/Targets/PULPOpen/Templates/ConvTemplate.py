@@ -200,14 +200,18 @@ pulp_nn_depthwise${signatureString}(${data_in}, ${ctxtBuffer}, NULL, ${data_out}
 // wrong by +-1/+-2 (FEMBA's conv1d, pads [3, 0]: t = 0, 1 of every channel; the same conv with
 // the zeros padded explicitly is exact). Recompute those outputs here: the kernel reads the
 // input as [C][L] (i_in_ch = c * L) and writes the output as [L][C] (pOut + c + l * ch_out).
-if (${padding_y_top} > 0) {
+// In a tiled model the same off-by-one shows up at the first two outputs of every inner L
+// tile as well (no padding there, halo rows present: FEMBA K17 prefix, t = 29, 30, 58, 59),
+// so the first (kernel - 1) outputs of every tile are recomputed.
+{
   pi_cl_team_barrier();
+  const int32_t _nfix = ${dim_kernel_y} - 1;
   const uint32_t _dwc = ${ch_im_out};
   const uint32_t _chunk = (_dwc + NUM_CORES - 1) / NUM_CORES;
   const uint32_t _c0 = pi_core_id() * _chunk;
   const uint32_t _c1 = (_c0 + _chunk < _dwc) ? _c0 + _chunk : _dwc;
   for (uint32_t _c = _c0; _c < _c1; _c++) {
-    for (int32_t _t = 0; _t < ${padding_y_top} && _t < ${dim_im_out_y}; _t++) {
+    for (int32_t _t = 0; _t < _nfix && _t < ${dim_im_out_y}; _t++) {
       int32_t _sum = 0;
       for (int32_t _r = 0; _r < ${dim_kernel_y}; _r++) {
         const int32_t _ti = _t * ${stride_y} + _r - ${padding_y_top};
