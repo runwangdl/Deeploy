@@ -126,3 +126,25 @@ class PULPSSDScanLayer(ONNXLayer):
                       shift_3a + mul_3b + add_3b + shift_3b)
 
         return B * H * numChunks * opsPerChunk
+
+
+class PULPMamba3ScanLayer(PULPSSDScanLayer):
+
+    def computeOps(self):
+        # SSD's count with the rank folded in: every dot product over N becomes one over N*R
+        # and the per-(query, feature) work is repeated per rank. RoPE adds 4 multiplies per
+        # state pair for B and for C per step; trapezoid adds one multiply-add per key.
+        rep = self.mapper.parser.operatorRepresentation
+        R = rep.get('mimo_rank', 1)
+        B, L, H, P, N, Chunk = (rep['batch_size'], rep['seq_len'], rep['n_heads'], rep['head_dim'], rep['d_state'],
+                                rep['chunk_size'])
+        numChunks = L // Chunk
+        tri = Chunk * (Chunk + 1) // 2
+        NR = N * R
+        per_chunk = (Chunk * (2 + NR)                      # phase 1: w_k, rotate, weight
+                     + Chunk * 2 * N                       # rope on B and C rows (4 mul / pair)
+                     + tri * (NR + 1)                      # scores
+                     + Chunk * P * R * (tri // Chunk + N + 3)   # y_diag, readout, gate, requant
+                     + Chunk * NR                          # phase 4 scaling
+                     + P * N * Chunk * R)                  # state fold
+        return B * H * numChunks * per_chunk

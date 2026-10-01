@@ -36,7 +36,7 @@ from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterTiling import 
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPL3Tiling import PULPL3Tiling
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPProfileUntiled import PULPProfileUntiled
 from Deeploy.Targets.PULPOpen.DataTypes import PULPDMAFuture
-from Deeploy.Targets.GAP9.Templates import SelectiveScanTemplate, SSDScanTemplate
+from Deeploy.Targets.GAP9.Templates import Mamba3ScanTemplate, SelectiveScanTemplate, SSDScanTemplate
 from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, FloatAddTemplate, FloatConvTemplate, \
     IntAddTemplate, \
     FloatGELUTemplate, FloatGemmTemplate, FloatLayernormTemplate, FloatMatMulTemplate, FloatMaxPoolTemplate, \
@@ -48,7 +48,7 @@ from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, F
     TransposeTemplate, UniformRequantShiftTemplate, iRMSNormTemplate, iSoftmaxTemplate, iLayernormTemplate, \
     QuantTemplate, DequantTemplate
 from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker, PULPLinearChecker, PULPMaxPoolChecker, \
-    PULPRequantShiftChecker, PULPSelectiveScanChecker, PULPSoftplusChecker, PULPSSDScanChecker
+    PULPMamba3ScanChecker, PULPRequantShiftChecker, PULPSelectiveScanChecker, PULPSoftplusChecker, PULPSSDScanChecker
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingVariableReplacement import TilingVariableReplacement, \
     TilingVariableReplacementUpdate
 
@@ -515,4 +515,20 @@ GAP9SSDScanBindings = [
             PointerClass(int32_t),
             PointerClass(int32_t)
         ], [PointerClass(int8_t)]), SSDScanTemplate.referenceTemplate, GAP9Transformer)
+]
+
+GAP9Mamba3ScanBindings = [
+    NodeBinding(
+        PULPMamba3ScanChecker([
+            PointerClass(int8_t),
+            PointerClass(int8_t),
+            PointerClass(int16_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int16_t),
+            PointerClass(int16_t),
+            PointerClass(int16_t)
+        ], [PointerClass(int8_t)]), Mamba3ScanTemplate.referenceTemplate, GAP9Transformer)
 ]

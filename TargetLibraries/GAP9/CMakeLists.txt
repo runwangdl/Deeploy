@@ -91,6 +91,7 @@ target_link_libraries(deeploygap9 PUBLIC pmsis)
 set(_KERNEL_O3_FILES
   ${CMAKE_CURRENT_LIST_DIR}/src/SelectiveScan.c
   ${CMAKE_CURRENT_LIST_DIR}/src/SSDScan.c
+  ${CMAKE_CURRENT_LIST_DIR}/src/Mamba3Scan.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/gemv.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Matmul.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/SILU_s8.c

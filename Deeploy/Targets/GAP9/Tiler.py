@@ -31,7 +31,7 @@ from Deeploy.Targets.GAP9.Bindings import GAP9AddBindings, GAP9ConcatBindings, G
     GAP9RQSTallGEMMBindings, GAP9SelectiveScanBindings, GAP9SGDBindings, GAP9SILUBindings, GAP9SoftmaxBindings, \
     GAP9SoftmaxCrossEntropyLossBindings, GAP9SoftmaxCrossEntropyLossGradBindings, GAP9SoftmaxGradBindings, \
     GAP9SoftplusBindings, GAP9TransposeBindings, GAP9UniformRQSBindings, GAP9QuantBindings, GAP9SliceBindings, \
-    GAP9RQSDWConv1DBindings, GAP9DequantBindings, GAP9SSDScanBindings
+    GAP9RQSDWConv1DBindings, GAP9DequantBindings, GAP9SSDScanBindings, GAP9Mamba3ScanBindings
 from Deeploy.Targets.Generic.TileConstraints.ConcatTileConstraint import ConcatTileConstraint
 from Deeploy.Targets.Generic.TileConstraints.iHardswishTileConstraint import iHardswishTileConstraint
 from Deeploy.Targets.Generic.TileConstraints.iRMSNormTileConstraint import iRMSNormTileConstraint
@@ -58,6 +58,7 @@ from Deeploy.Targets.PULPOpen.TileConstraints.ReduceSumTileConstraint import Red
 from Deeploy.Targets.PULPOpen.TileConstraints.RequantShiftTileConstraint import RequantShiftTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.SelectiveScanUntiledTileConstraint import SelectiveScanTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.SSDScanTileConstraint import SSDScanTileConstraint
+from Deeploy.Targets.PULPOpen.TileConstraints.Mamba3ScanTileConstraint import Mamba3ScanTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.SILUTileConstraint import SILUTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.SliceConstraint import SliceTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.SGDTileConstraint import SGDTileConstraint
@@ -208,3 +209,6 @@ GAP9SliceTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9SliceB
 
 GAP9ReduceMeanTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9ReduceMeanBindings,
                                                              tileConstraint = ReduceMeanTileConstraint())
+
+GAP9Mamba3ScanTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9Mamba3ScanBindings,
+                                                            tileConstraint = Mamba3ScanTileConstraint())

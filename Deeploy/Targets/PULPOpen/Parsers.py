@@ -677,3 +677,59 @@ class PULPSSDScanParser(NodeParser):
             return newCtxt, True
         else:
             return ctxt, False
+
+
+class PULPMamba3ScanParser(PULPSSDScanParser):
+    """Mamba3_Scan: SSD_Scan's seven inputs plus gamma, w, theta (int16), and a mimo_rank
+    attribute. gamma/w are the trapezoid per-key weights precomputed upstream (w needs
+    dt_{t+1}, which an L-tiled kernel cannot see). d_inner = n_heads * head_dim * mimo_rank."""
+
+    def parseNode(self, node: gs.Node) -> bool:
+        ret = all([
+            node.op == 'Mamba3_Scan',
+            len(node.inputs) == 10,
+            len(node.outputs) == 1,
+            'n_groups' in node.attrs and int(node.attrs['n_groups']) == 1,
+        ])
+        if not ret:
+            return False
+        for key in ('batch_size', 'seq_len', 'chunk_size', 'd_state', 'head_dim', 'n_groups', 'n_heads'):
+            if key in node.attrs:
+                self.operatorRepresentation[key] = int(node.attrs[key])
+        self.operatorRepresentation['mimo_rank'] = int(node.attrs.get('mimo_rank', 1))
+        self.operatorRepresentation['d_inner'] = (self.operatorRepresentation['head_dim'] *
+                                                  self.operatorRepresentation['n_heads'] *
+                                                  self.operatorRepresentation['mimo_rank'])
+        if 'gate_z_scale' in node.attrs:
+            self.operatorRepresentation['gate_z_scale'] = float(node.attrs['gate_z_scale'])
+        self.operatorRepresentation['output_requant_mul_q40'] = int(node.attrs['output_requant_mul_q40'])
+        return True
+
+    def parseNodeCtxt(self,
+                      ctxt: NetworkContext,
+                      node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        # NodeParser.parseNodeCtxt, not the SSD one: it would try to map the first 7 inputs only.
+        newCtxt, ret = NodeParser.parseNodeCtxt(self, ctxt, node, channels_first)
+        if not ret:
+            return ctxt, False
+        inputs = ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip', 'gamma', 'w', 'theta']
+        for idx, inputNode in enumerate(node.inputs):
+            self.operatorRepresentation[inputs[idx]] = newCtxt.lookup(inputNode.name).name
+        self.operatorRepresentation['y'] = newCtxt.lookup(node.outputs[0].name).name
+
+        gate_z_scale = self.operatorRepresentation['gate_z_scale']
+        lut_name = node.name + '_gate_lut'
+        if lut_name not in newCtxt.globalObjects:
+            indices = np.arange(256, dtype = np.float64)
+            z_d = (indices - 128.0) * gate_z_scale
+            z_clip = np.clip(z_d, -20.0, 20.0)
+            sig = 1.0 / (1.0 + np.exp(-z_clip))
+            q20 = np.round(z_d * sig * float(1 << 20)).astype(np.int64)
+            q13 = np.where(q20 >= 0, (q20 + 64) >> 7, -((-q20 + 64) >> 7))
+            gate_lut_buf = newCtxt.ConstantBuffer(lut_name, [256], q13.astype(np.int32))
+            newCtxt.add(gate_lut_buf, ctxt = 'global')
+            newCtxt.annotateType(lut_name, PointerClass(int32_t))
+            gate_lut_buf._memoryLevel = "L2"
+        self.operatorRepresentation['gate_lut'] = lut_name
+        return newCtxt, True

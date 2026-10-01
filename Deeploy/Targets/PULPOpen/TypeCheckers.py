@@ -201,3 +201,9 @@ class PULPSSDScanChecker(SignPropTypeChecker):
     def checkOutputType(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> bool:
 
         return True
+
+
+class PULPMamba3ScanChecker(PULPSSDScanChecker):
+    # Same contract as SSDScan: int8 in, int8 out, signedness from x. The two extra int16
+    # inputs (lam, theta) do not affect the output type.
+    pass
