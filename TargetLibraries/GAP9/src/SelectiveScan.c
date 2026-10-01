@@ -51,6 +51,9 @@ static inline int64_t _ssm_y_contrib(int32_t h_new, int32_t C_n) {
   return ((int64_t)h_new * (int64_t)C_n) >> SSM_WIDE_FRAC_BITS;
 }
 
+// Exported handle to the L1 exp LUT (static in SelectiveScanLUT.h) for other kernels / generated code.
+const int16_t *const SelectiveScan_exp_lut_ptr = SelectiveScan_exp_lut_qwide;
+
 void GAP9_SelectiveScan_i8_i8(
     const int8_t *__restrict__ x, const int8_t *__restrict__ z,
     const int16_t *__restrict__ dt, const int32_t *__restrict__ B,

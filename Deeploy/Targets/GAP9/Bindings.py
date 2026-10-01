@@ -36,7 +36,7 @@ from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterTiling import 
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPL3Tiling import PULPL3Tiling
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPProfileUntiled import PULPProfileUntiled
 from Deeploy.Targets.PULPOpen.DataTypes import PULPDMAFuture
-from Deeploy.Targets.GAP9.Templates import Mamba3ScanTemplate, SelectiveScanTemplate, SSDScanTemplate
+from Deeploy.Targets.GAP9.Templates import Mamba3ScanTemplate, SelectiveScanI16Template, SelectiveScanTemplate, SSDScanTemplate
 from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, FloatAddTemplate, FloatConvTemplate, \
     IntAddTemplate, \
     FloatGELUTemplate, FloatGemmTemplate, FloatLayernormTemplate, FloatMatMulTemplate, FloatMaxPoolTemplate, \
@@ -48,7 +48,7 @@ from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, F
     TransposeTemplate, UniformRequantShiftTemplate, iRMSNormTemplate, iSoftmaxTemplate, iLayernormTemplate, \
     QuantTemplate, DequantTemplate
 from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker, PULPLinearChecker, PULPMaxPoolChecker, \
-    PULPMamba3ScanChecker, PULPRequantShiftChecker, PULPSelectiveScanChecker, PULPSoftplusChecker, PULPSSDScanChecker
+    PULPMamba3ScanChecker, PULPRequantShiftChecker, PULPSelectiveScanChecker, PULPSelectiveScanI16Checker, PULPSoftplusChecker, PULPSSDScanChecker
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingVariableReplacement import TilingVariableReplacement, \
     TilingVariableReplacementUpdate
 
@@ -515,6 +515,25 @@ GAP9SelectiveScanBindings = [
             PointerClass(int32_t),
             PointerClass(int32_t)
         ], [PointerClass(int8_t)]), SelectiveScanTemplate.referenceTemplate, GAP9Transformer)
+]
+
+GAP9SelectiveScanI16Bindings = [
+    NodeBinding(
+        PULPSelectiveScanI16Checker([
+            PointerClass(int8_t),    # x
+            PointerClass(int8_t),    # z
+            PointerClass(int16_t),   # dt
+            PointerClass(int32_t),   # B
+            PointerClass(int32_t),   # C
+            PointerClass(int16_t),   # A16
+            PointerClass(int32_t),   # D_skip
+            PointerClass(shA_t),     # shA = 8 - sA (signed, small)
+            PointerClass(sh_t),      # sH
+            PointerClass(sh_t),      # ysh = sH + bc_shift
+        ], [PointerClass(int8_t)]), SelectiveScanI16Template.referenceTemplate, GAP9Transformer)
+    # constants are typed by value range by Deeploy: accept the narrow signed/unsigned 8-bit types
+    for shA_t in [int8_t, uint8_t]
+    for sh_t in [uint8_t, int8_t]
 ]
 
 GAP9SSDScanBindings = [

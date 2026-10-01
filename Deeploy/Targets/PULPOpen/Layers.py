@@ -81,6 +81,10 @@ class PULPSelectiveScanLayer(ONNXLayer):
         return B * L * D * (ops_per_n * N + ops_per_td_post)
 
 
+class PULPSelectiveScanI16Layer(PULPSelectiveScanLayer):
+    pass
+
+
 class PULPSSDScanLayer(ONNXLayer):
 
     def __init__(self, maps: List[NodeMapper]):

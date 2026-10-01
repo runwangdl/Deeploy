@@ -192,3 +192,55 @@ class SelectiveScanTileConstraint(TileConstraint):
         schedule = TilingSchedule(inputBaseOffsets, outputBaseOffsets, inputLoadSchedule, outputLoadSchedule)
 
         return VariableReplacementScheme(replacements, replacementTypes), schedule
+
+
+class SelectiveScanI16TileConstraint(SelectiveScanTileConstraint):
+    """SelectiveScanI16: same tiling as SelectiveScan plus the per-channel constants shA, sH, ysh ([d_inner],
+    tiled like D_skip)."""
+
+    @staticmethod
+    def addGeometricalConstraint(tilerModel: TilerModel, parseDict: Dict, ctxt: NetworkContext) -> TilerModel:
+        tilerModel = SelectiveScanTileConstraint.addGeometricalConstraint(tilerModel, parseDict, ctxt)
+        xBuffer = ctxt.lookup(name = parseDict["x"])
+        xDInnerDimVar = tilerModel.getTensorDimVar(tensorName = xBuffer.name, dimIdx = 2)
+        for key in ("shA", "sH", "ysh"):
+            buf = ctxt.lookup(name = parseDict[key])
+            tilerModel.addTensorDimToModel(ctxt, buf.name)
+            tilerModel.addConstraint(tilerModel.getTensorDimVar(tensorName = buf.name, dimIdx = 0) == xDInnerDimVar)
+        return tilerModel
+
+    @classmethod
+    def serializeTilingSolution(
+            cls, tilingSolution: NodeMemoryConstraint, absoluteOutputCubes: List[AbsoluteHyperRectangle],
+            targetMemLevel: str, ctxt: NetworkContext,
+            operatorRepresentation: OperatorRepresentation) -> Tuple[VariableReplacementScheme, TilingSchedule]:
+        outputCubes = [cube.rectangle for cube in absoluteOutputCubes]
+        absoluteLOffsets = [cube.absoluteOffset[1] for cube in absoluteOutputCubes]
+        addrNames = ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip', 'shA', 'sH', 'ysh', 'y']
+        inputBaseOffsets, outputBaseOffsets = cls.extractBaseAddr(tilingSolution, targetMemLevel, operatorRepresentation, addrNames)
+        NSize = ctxt.lookup(operatorRepresentation['A']).shape[-1]
+        replacements = {"batch_size": [], "seq_len": [], "d_inner": [], "d_state": [], "is_first_L_tile": []}
+        inputLoadSchedule, outputLoadSchedule = [], []
+        for cube, absLOffset in zip(outputCubes, absoluteLOffsets):
+            BatchOffset, LOffset, DInnerOffset = cube.offset
+            BatchSize, LSize, DInnerSize = cube.dims
+            replacements["batch_size"].append(BatchSize)
+            replacements["seq_len"].append(LSize)
+            replacements["d_inner"].append(DInnerSize)
+            replacements["d_state"].append(NSize)
+            replacements["is_first_L_tile"].append(1 if absLOffset == 0 else 0)
+            xyz = HyperRectangle((BatchOffset, LOffset, DInnerOffset), (BatchSize, LSize, DInnerSize))
+            bc = HyperRectangle((BatchOffset, LOffset, 0), (BatchSize, LSize, NSize))
+            a = HyperRectangle((DInnerOffset, 0), (DInnerSize, NSize))
+            d = HyperRectangle((DInnerOffset,), (DInnerSize,))
+            inputLoadSchedule.append({"x": xyz, "z": xyz, "dt": xyz, "B": bc, "C": bc, "A": a, "D_skip": d, "shA": d, "sH": d, "ysh": d})
+            outputLoadSchedule.append({"y": xyz})
+        replacementTypes = {
+            "batch_size": PointerClass(uint8_t),
+            "seq_len": PointerClass(uint16_t),
+            "d_inner": PointerClass(uint16_t),
+            "d_state": PointerClass(uint16_t),
+            "is_first_L_tile": PointerClass(uint8_t),
+        }
+        schedule = TilingSchedule(inputBaseOffsets, outputBaseOffsets, inputLoadSchedule, outputLoadSchedule)
+        return VariableReplacementScheme(replacements, replacementTypes), schedule

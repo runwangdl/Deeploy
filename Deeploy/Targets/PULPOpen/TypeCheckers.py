@@ -181,6 +181,10 @@ class PULPSelectiveScanChecker(SignPropTypeChecker):
         return True
 
 
+class PULPSelectiveScanI16Checker(PULPSelectiveScanChecker):
+    pass
+
+
 class PULPSSDScanChecker(SignPropTypeChecker):
 
     def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):

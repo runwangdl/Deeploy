@@ -733,3 +733,52 @@ class PULPMamba3ScanParser(PULPSSDScanParser):
             gate_lut_buf._memoryLevel = "L2"
         self.operatorRepresentation['gate_lut'] = lut_name
         return newCtxt, True
+
+
+class PULPSelectiveScanI16Parser(PULPSelectiveScanParser):
+    """SelectiveScanI16: int16 recurrent state with per-channel power-of-two shifts.
+    inputs: x, z, dt, B, C, A16 (int16 [D,N]), D_skip, shA (int8 [D] = 8 - sA), sH (uint8 [D]), ysh (uint8 [D] = sH + bc_shift)
+    attrs:  batch, seq_len, d_inner, d_state, output_requant_mul_q40, gate_z_scale, bc_shift"""
+
+    def parseNode(self, node: gs.Node) -> bool:
+        ret = all([
+            node.op == 'SelectiveScanI16',
+            len(node.inputs) == 10,
+            len(node.outputs) == 1,
+        ])
+        if ret:
+            self.operatorRepresentation['batch_size'] = int(node.attrs['batch'])
+            for k in ('seq_len', 'd_inner', 'd_state', 'output_requant_mul_q40', 'bc_shift'):
+                if k in node.attrs:
+                    self.operatorRepresentation[k] = int(node.attrs[k])
+            self.operatorRepresentation.setdefault('bc_shift', 6)
+            if 'gate_z_scale' in node.attrs:
+                self.operatorRepresentation['gate_z_scale'] = float(node.attrs['gate_z_scale'])
+        return ret
+
+    def parseNodeCtxt(self,
+                      ctxt: NetworkContext,
+                      node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        newCtxt, ret = NodeParser.parseNodeCtxt(self, ctxt, node, channels_first)
+        if not ret:
+            return ctxt, False
+        inputs = ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip', 'shA', 'sH', 'ysh']
+        for idx, inputNode in enumerate(node.inputs):
+            self.operatorRepresentation[inputs[idx]] = newCtxt.lookup(inputNode.name).name
+        self.operatorRepresentation['y'] = newCtxt.lookup(node.outputs[0].name).name
+        gate_z_scale = self.operatorRepresentation['gate_z_scale']
+        lut_name = node.name + '_gate_lut'
+        if lut_name not in newCtxt.globalObjects:
+            indices = np.arange(256, dtype = np.float64)
+            z_d = (indices - 128.0) * gate_z_scale
+            z_clip = np.clip(z_d, -20.0, 20.0)
+            sig = 1.0 / (1.0 + np.exp(-z_clip))
+            q20 = np.round(z_d * sig * float(1 << 20)).astype(np.int64)
+            q13 = np.where(q20 >= 0, (q20 + 64) >> 7, -((-q20 + 64) >> 7))
+            gate_lut_buf = newCtxt.ConstantBuffer(lut_name, [256], q13.astype(np.int32))
+            newCtxt.add(gate_lut_buf, ctxt = 'global')
+            newCtxt.annotateType(lut_name, PointerClass(int32_t))
+            gate_lut_buf._memoryLevel = "L2"
+        self.operatorRepresentation['gate_lut'] = lut_name
+        return newCtxt, True
