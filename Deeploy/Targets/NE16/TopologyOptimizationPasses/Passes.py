@@ -291,7 +291,9 @@ def _inputIsSigned(tensor: gs.Variable) -> bool:
         return True  # graph input: assume signed (FEMBA); CI's uint8 nets never reach here
     producer = tensor.inputs[0]
     if "signed" in producer.attrs:
-        return bool(int(np.asarray(producer.attrs["signed"]).item()))
+        v = producer.attrs["signed"]
+        v = v.values if isinstance(v, gs.Constant) else v
+        return bool(int(np.asarray(v).reshape(-1)[0]))
     if producer.op in ("Relu", "MaxPool", "AveragePool"):
         return False
     return True
@@ -355,8 +357,12 @@ def _ne16_unsigned_input_fun(graph: gs.Graph, match: Match, name: str, ne16Engin
     y = node.outputs[0]
     orig = None
     if node.op == "RequantizedConv":
-        orig = (node.inputs[2], node.inputs[3], node.attrs["div"],
-                node.attrs.get("n_levels_out", node.attrs.get("n_levels")), node.attrs.get("signed", np.array([1.0])))
+        def _arr(v):  # attributes may arrive as python scalars, arrays or Constants; parsers want arrays/Constants
+            if isinstance(v, gs.Constant):
+                return v
+            return np.asarray(v, dtype = np.float64).reshape(-1)
+        orig = (node.inputs[2], node.inputs[3], _arr(node.attrs["div"]),
+                _arr(node.attrs.get("n_levels_out", node.attrs.get("n_levels"))), _arr(node.attrs.get("signed", 1.0)))
         node.inputs[2] = gs.Constant(f"{name}_scale1", np.ones(Ko, dtype = np.int32))
         node.inputs[3] = gs.Constant(f"{name}_comp", comp)
     else:

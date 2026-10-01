@@ -287,7 +287,7 @@ void UniformRequantShift_s32_s8(int32_t *data_in, int32_t size, int32_t mul,
 
   // JUNGVI: Compiler magic, don't remove the volatile keyword below
   int32_t volatile halfChunkSize = chunk >> 1;
-  int32_t intermediate;
+  int64_t intermediate;  // 64-bit: int32 acc * mul overflows for FEMBA-scale requants (mul ~ 7e4)
   int8_t out;
   int32_t reg_data_in_A;
   int32_t reg_data_in_B;
@@ -301,8 +301,8 @@ void UniformRequantShift_s32_s8(int32_t *data_in, int32_t size, int32_t mul,
     reg_data_in_B = data_in[halfChunkSize + i];
 
     // Compute i
-    intermediate = (reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
+    intermediate = ((int64_t)reg_data_in_A + input_offset) * mul + add;
+    intermediate = ((intermediate + ((log2D > 0 ? ((int64_t)1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[i] = out;
@@ -311,8 +311,8 @@ void UniformRequantShift_s32_s8(int32_t *data_in, int32_t size, int32_t mul,
     reg_data_in_A = data_in[i + 1];
 
     // Compute step halfChunkSize + i
-    intermediate = (reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
+    intermediate = ((int64_t)reg_data_in_B + input_offset) * mul + add;
+    intermediate = ((intermediate + ((log2D > 0 ? ((int64_t)1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[halfChunkSize + i] = out;
@@ -324,14 +324,14 @@ void UniformRequantShift_s32_s8(int32_t *data_in, int32_t size, int32_t mul,
     reg_data_in_B = data_in[chunk_stop - 1];
     reg_data_in_A = data_in[chunk_stop];
 
-    intermediate = (reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
+    intermediate = ((int64_t)reg_data_in_B + input_offset) * mul + add;
+    intermediate = ((intermediate + ((log2D > 0 ? ((int64_t)1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[chunk_stop - 1] = out;
 
-    intermediate = (reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((log2D > 0 ? (1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
+    intermediate = ((int64_t)reg_data_in_A + input_offset) * mul + add;
+    intermediate = ((intermediate + ((log2D > 0 ? ((int64_t)1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
                    output_offset;
     out = (int8_t)CLAMP(intermediate, output_min, output_max);
     data_out[chunk_stop] = out;
