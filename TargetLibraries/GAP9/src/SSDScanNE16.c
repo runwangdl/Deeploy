@@ -82,6 +82,20 @@ static inline int64_t ssdn_round_shift(int64_t x, int s) {
   return (x >= 0) ? ((x + half) >> s) : -(((-x) + half) >> s);
 }
 
+// (int64_t)v << l for an int32 v and 1 <= l < 32, built from two 32-bit shifts (RV32 has no 64-bit shifter)
+static inline __attribute__((always_inline)) int64_t ssdn_shl32(int32_t v, int l) {
+  const uint32_t lo = (uint32_t)v << l;
+  const int32_t hi = v >> (32 - l);
+  return (int64_t)(((uint64_t)(uint32_t)hi << 32) | lo);
+}
+
+// branchless symmetric rounding shift by 13 (the SiLU gate), int64
+static inline __attribute__((always_inline)) int64_t ssdn_rs13(int64_t x) {
+  const int64_t m = x >> 63;
+  const int64_t a = ((x ^ m) - m + (1 << 12)) >> 13;
+  return (a ^ m) - m;
+}
+
 static inline int32_t ssdn_sat_i32(int64_t x) {
   if (x > (int64_t)2147483647)
     return (int32_t)2147483647;
@@ -215,8 +229,8 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
 
   const int number_of_chunks = (int)(L / Q);
 #if SSDN_PROFILE
-  uint32_t prof_G = 0, prof_A = 0, prof_B = 0;
-  if (core == 0) { pi_perf_conf(1 << PI_PERF_CYCLES); pi_perf_reset(); pi_perf_start(); }
+  uint32_t prof_G = 0, prof_A = 0, prof_B = 0, pb_disp = 0, pb_res = 0, pb_epi = 0, pb_upd = 0, pb_bar = 0;
+  if (core == 0 || core == 1) { pi_perf_conf(1 << PI_PERF_CYCLES); pi_perf_reset(); pi_perf_start(); }
   SSDN_T(prof_t0);
 #endif
 
@@ -343,6 +357,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
 
       // ---- phase B: core 0 queues head hh, everybody finishes head hh-1 while the NE16 runs ----
       for (uint32_t hh = 0; hh <= NHt; hh++) {
+        SSDN_T(pb_t0);
         if (core == 0 && hh < NHt) {
           const uint32_t sl = hh & 1;
           const uint8_t *we = wenc + hh * WSZ;
@@ -351,6 +366,10 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
           ssdn_dispatch(dev, &ssdn_tasks[sl][1], xt + hh * PXA * Q, we + Q * Q, a + PXA * Q);
           ssdn_dispatch(dev, &ssdn_tasks[sl][2], su + hh * PXA * N, we + Q * Q + N * Q, a + PXA * Q + PXA * N);
         }
+        SSDN_T(pb_t1);
+#if SSDN_PROFILE
+        if (core == 0) pb_disp += pb_t1 - pb_t0;
+#endif
         if (hh > 0) {
           const uint32_t hp = hh - 1;
           const uint32_t sl = hp & 1;
@@ -364,7 +383,9 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
           const int64_t eQ0 = (int64_t)mt[4];
           const int64_t D_h = (int64_t)D_skip[hp];
           const int64_t mul = (int64_t)output_requant_mul_q40;
-          // y epilogue (identical to GAP9_SSDScan_i8_i8), rows t over the cores
+          // y epilogue (identical to GAP9_SSDScan_i8_i8), rows t over the cores. y = sat8(rs(y_g*mul, 40)) is
+          // exactly 0 for |y_g| <= zth, which skips the second 64-bit multiply (SSD outputs are mostly zero).
+          const int64_t zth = (((int64_t)1 << 39) - 1) / mul;
           for (uint32_t t = (uint32_t)core; t < Q; t += NUM_CORES) {
             const uint32_t row = (b * L + t0 + t) * d_inner + hp * P;
             const int8_t *xr = x + row, *zr = z + row;
@@ -377,9 +398,14 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
               const int64_t y_acc = ((v1 << l1) >> r1) + ((v3 << l3) >> r3) + D_h * (int64_t)xr[c];
               const int64_t gate = (int64_t)gate_lut[(int32_t)zr[c] + 128];
               const int64_t y_g = ssdn_round_shift(y_acc * gate, 13);
-              yr[c] = ssdn_sat_i8(ssdn_round_shift(y_g * mul, SSDN_OUT_SHIFT));
+              const int64_t ag = y_g < 0 ? -y_g : y_g;
+              yr[c] = (ag <= zth) ? (int8_t)0 : ssdn_sat_i8(ssdn_round_shift(y_g * mul, SSDN_OUT_SHIFT));
             }
           }
+          SSDN_T(pb_t2);
+#if SSDN_PROFILE
+          if (core == 1) pb_epi += pb_t2 - pb_t1;
+#endif
           // state update, channels over the cores; per-core |state| max for the next quantisation
           int32_t *hs = h_state + (b * NHt + hp) * P * N;
           uint32_t mxs = 0;
@@ -395,11 +421,21 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
             }
           }
           hmax[(b * NHt + hp) * NUM_CORES + (uint32_t)core] = (int32_t)mxs;
+#if SSDN_PROFILE
+          if (core == 1) pb_upd += pi_perf_read(PI_PERF_CYCLES) - pb_t2;
+#endif
         }
+        SSDN_T(pb_t3);
         pi_cl_team_barrier();
+        SSDN_T(pb_t4);
         if (core == 0 && hh < NHt)
           ne16_nnx_resolve_wait(dev, &ssdn_tasks[hh & 1][2]);
+        SSDN_T(pb_t5);
         pi_cl_team_barrier();
+#if SSDN_PROFILE
+        if (core == 0) pb_res += pb_t5 - pb_t4;
+        if (core == 1) pb_bar += (pb_t4 - pb_t3) + (pi_perf_read(PI_PERF_CYCLES) - pb_t5);
+#endif
       }
 #if SSDN_PROFILE
       if (core == 0) { uint32_t t = pi_perf_read(PI_PERF_CYCLES); prof_G += prof_a0 - prof_g0; prof_A += prof_b0 - prof_a0; prof_B += t - prof_b0; }
@@ -408,7 +444,9 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   }
   pi_cl_team_barrier();
 #if SSDN_PROFILE
-  if (core == 0) printf("SSDN_PROF NHt=%u L=%u G=%u A=%u B=%u total=%u\n", NHt, L, prof_G, prof_A, prof_B, pi_perf_read(PI_PERF_CYCLES) - prof_t0);
+  if (core == 0) printf("SSDN_PROF NHt=%u L=%u G=%u A=%u B=%u total=%u core0: dispatch=%u resolve_wait=%u\n", NHt, L, prof_G, prof_A, prof_B, pi_perf_read(PI_PERF_CYCLES) - prof_t0, pb_disp, pb_res);
+  pi_cl_team_barrier();
+  if (core == 1) printf("SSDN_PROF core1: epilogue=%u state_update=%u barrier_wait=%u\n", pb_epi, pb_upd, pb_bar);
 #endif
 }
 
