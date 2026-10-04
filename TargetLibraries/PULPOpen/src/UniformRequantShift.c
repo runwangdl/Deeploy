@@ -305,6 +305,43 @@ void UniformRequantShift_s32_s32(int32_t *data_in, int32_t size, int32_t mul,
   }
 }
 
+void UniformRequantShift_s8_s32(int8_t *data_in, int32_t size, int32_t mul,
+                                 int32_t add, int32_t *data_out, int32_t log2D,
+                                 int32_t HW, int32_t input_offset,
+                                 int32_t output_offset, int32_t output_min,
+                                 int32_t output_max, bool rounding) {
+  // int64 intermediate (int32 acc * mul overflows int32 for FEMBA scales); the rounding term
+  // is hoisted and the loop is a plain 4x-unrolled stream (the old two-stream version spent
+  // ~55 core-cycles per element on variable 64-bit shifts and clamps).
+  const int32_t core_id = pi_core_id();
+  const int32_t log2Core = LOG2(NUM_CORES);
+  const int32_t chunk = (size >> log2Core) + ((size & (NUM_CORES - 1)) != 0);
+  const int32_t start = MIN(chunk * core_id, size);
+  const int32_t stop = MIN(start + chunk, size);
+  const int64_t addr = (int64_t)add + ((rounding && log2D > 0) ? ((int64_t)1 << (log2D - 1)) : 0);
+  const int64_t lo = output_min, hi = output_max;
+  int32_t i = start;
+  for (; i + 4 <= stop; i += 4) {
+    int64_t v0 = (((int64_t)(data_in[i] + input_offset)) * mul + addr) >> log2D;
+    int64_t v1 = (((int64_t)(data_in[i + 1] + input_offset)) * mul + addr) >> log2D;
+    int64_t v2 = (((int64_t)(data_in[i + 2] + input_offset)) * mul + addr) >> log2D;
+    int64_t v3 = (((int64_t)(data_in[i + 3] + input_offset)) * mul + addr) >> log2D;
+    v0 = (v0 < lo) ? lo : ((v0 > hi) ? hi : v0);
+    v1 = (v1 < lo) ? lo : ((v1 > hi) ? hi : v1);
+    v2 = (v2 < lo) ? lo : ((v2 > hi) ? hi : v2);
+    v3 = (v3 < lo) ? lo : ((v3 > hi) ? hi : v3);
+    data_out[i] = (int32_t)v0 + output_offset;
+    data_out[i + 1] = (int32_t)v1 + output_offset;
+    data_out[i + 2] = (int32_t)v2 + output_offset;
+    data_out[i + 3] = (int32_t)v3 + output_offset;
+  }
+  for (; i < stop; i++) {
+    int64_t v = (((int64_t)(data_in[i] + input_offset)) * mul + addr) >> log2D;
+    v = (v < lo) ? lo : ((v > hi) ? hi : v);
+    data_out[i] = (int32_t)v + output_offset;
+  }
+}
+
 void UniformRequantShift_s32_s8(int32_t *data_in, int32_t size, int32_t mul,
                                 int32_t add, int8_t *data_out, int32_t log2D,
                                 int32_t HW, int32_t input_offset,

@@ -368,7 +368,12 @@ GAP9UniformRQS_s32Bindings = [
     NodeBinding(
         PULPRequantShiftChecker([PointerClass(int32_t), PointerClass(int32_t),
                                  PointerClass(int32_t)], [PointerClass(int32_t)]),
-        UniformRequantShiftTemplate.referenceTemplate, GAP9Transformer)
+        UniformRequantShiftTemplate.referenceTemplate, GAP9Transformer),
+    # int8 -> int32 (Mamba-2: dt / B / C taken straight from in_proj and widened to Q20 / Q15)
+    NodeBinding(
+        PULPRequantShiftChecker([PointerClass(int8_t), PointerClass(int32_t),
+                                 PointerClass(int32_t)], [PointerClass(int32_t)]),
+        UniformRequantShiftTemplate.referenceTemplate, GAP9Transformer),
 ]
 
 GAP9SoftplusBindings = [
