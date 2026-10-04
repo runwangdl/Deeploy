@@ -342,8 +342,19 @@ def _ne16_unsigned_input_fun(graph: gs.Graph, match: Match, name: str, ne16Engin
     # 1) x -> x + 128 as uint8 (shared between all NE16 consumers of the same tensor: FEMBA's in_proj,
     #    B/C/dt projections read the same input, and one Xor128 copy serves them all)
     x_u = None
+
+    def _source(t):
+        # the GEMM->PwConv lowering gives every consumer its own Reshape of the shared producer tensor:
+        # key the sharing on (reshaped-from tensor, shape) so one u8 copy serves all of them
+        prod = t.inputs[0] if len(t.inputs) == 1 else None
+        if prod is not None and prod.op == "Reshape" and len(prod.inputs) > 0:
+            return (prod.inputs[0].name, tuple(int(v) for v in (t.shape or ())))
+        return (t.name, tuple(int(v) for v in (t.shape or ())))
+
+    key = _source(x)
     for other in graph.nodes:
-        if other.op == "RequantShift" and other.name.endswith("_to_u8") and len(other.inputs) > 0 and other.inputs[0].name == x.name:
+        if other.op == "RequantShift" and other.name.endswith("_to_u8") and len(other.inputs) > 0 and \
+                _source(other.inputs[0]) == key:
             x_u = other.outputs[0]
             break
     if x_u is not None:
