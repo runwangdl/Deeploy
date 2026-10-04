@@ -339,28 +339,37 @@ def _ne16_unsigned_input_fun(graph: gs.Graph, match: Match, name: str, ne16Engin
     def _attr(v):
         return gs.Constant(f"{name}_attr_{np.random.randint(1 << 30)}", np.array([v]))
 
-    # 1) x -> x + 128 as uint8
-    x_u = gs.Variable(name = f"{name}_{x.name}_u8", dtype = np.float32, shape = x.shape)
-    graph.nodes.append(
-        gs.Node(op = "RequantShift",
-                name = f"{name}_to_u8",
-                inputs = [
-                    x,
-                    # scalar mul/add: the uniform kernel is the 8-core one (the per-channel
-                    # RequantShift_s8_u8_NHWC is a single-core loop with a modulo per element,
-                    # 5.2 M cycles per FEMBA projection input)
-                    # (2x + 256 + 1) >> 1 == x + 128 exactly; div 2 instead of 1 because the
-                    # RequantShift kernels' rounding term is 1 << (log2D - 1), undefined at log2D 0
-                    gs.Constant(f"{name}_u8_mul", np.array([2], dtype = np.int32)),
-                    gs.Constant(f"{name}_u8_add", np.array([256], dtype = np.int32))
-                ],
-                outputs = [x_u],
-                attrs = {
-                    "div": _attr(2),
-                    "n_levels_out": np.array([256.0]),
-                    "signed": np.array([0.0])
-                }))
-    node.inputs[0] = x_u
+    # 1) x -> x + 128 as uint8 (shared between all NE16 consumers of the same tensor: FEMBA's in_proj,
+    #    B/C/dt projections read the same input, and one Xor128 copy serves them all)
+    x_u = None
+    for other in graph.nodes:
+        if other.op == "RequantShift" and other.name.endswith("_to_u8") and len(other.inputs) > 0 and other.inputs[0].name == x.name:
+            x_u = other.outputs[0]
+            break
+    if x_u is not None:
+        node.inputs[0] = x_u
+    else:
+        x_u = gs.Variable(name = f"{name}_{x.name}_u8", dtype = np.float32, shape = x.shape)
+        graph.nodes.append(
+            gs.Node(op = "RequantShift",
+                    name = f"{name}_to_u8",
+                    inputs = [
+                        x,
+                        # scalar mul/add: the uniform kernel is the 8-core one (the per-channel
+                        # RequantShift_s8_u8_NHWC is a single-core loop with a modulo per element,
+                        # 5.2 M cycles per FEMBA projection input)
+                        # (2x + 256 + 1) >> 1 == x + 128 exactly; div 2 instead of 1 because the
+                        # RequantShift kernels' rounding term is 1 << (log2D - 1), undefined at log2D 0
+                        gs.Constant(f"{name}_u8_mul", np.array([2], dtype = np.int32)),
+                        gs.Constant(f"{name}_u8_add", np.array([256], dtype = np.int32))
+                    ],
+                    outputs = [x_u],
+                    attrs = {
+                        "div": _attr(2),
+                        "n_levels_out": np.array([256.0]),
+                        "signed": np.array([0.0])
+                    }))
+        node.inputs[0] = x_u
 
     # 2a) NE16-side requantization (DEEPLOY_NE16_REQUANT=1). gvsoc's NE16 norm/quant is
     #     out = clip8((acc * nq8[ko] + bias32[ko]) >> shift) with an 8-bit unsigned per-channel

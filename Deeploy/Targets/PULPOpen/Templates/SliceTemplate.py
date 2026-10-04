@@ -24,9 +24,11 @@ lastAx = int(axes[-1])
 rowElems = dimSteps[lastAx]
 rowBytes = rowElems * elemBytes
 
-# Parallel fast paths only for tiled slices (data_in_size is a per-tile ref); untiled falls to the sequential loop.
+# Parallel fast paths: forward only for tiled slices (data_in_size is a per-tile ref); the row-reversal path
+# also for untiled slices (FEMBA's sequence flips stay untiled and ran the sequential loop on one core, ~9 cycles/B).
 forwardPath = isinstance(data_in_size, str) and all(int(s) == 1 for s in steps)
-reversePath = isinstance(data_in_size, str) and all(int(s) == -1 for s in steps)
+reversePath = all(int(s) == -1 for s in steps) and len(axes) == 1 and int(axes[0]) == 1 and \
+    int(starts[0]) in (-1, int(data_in_shape[1]) - 1) and (int(ends[0]) == -1 or int(ends[0]) <= -int(data_in_shape[1]) - 1)
 
 # Sequential-fallback setup (used only when neither fast path applies).
 collapseInner = (int(steps[-1]) == 1)
