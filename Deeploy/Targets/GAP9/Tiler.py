@@ -31,7 +31,7 @@ from Deeploy.Targets.GAP9.Bindings import GAP9AddBindings, GAP9ConcatBindings, G
     GAP9RQSTallGEMMBindings, GAP9SelectiveScanBindings, GAP9SelectiveScanI16Bindings, GAP9SGDBindings, GAP9SILUBindings, GAP9SoftmaxBindings, \
     GAP9SoftmaxCrossEntropyLossBindings, GAP9SoftmaxCrossEntropyLossGradBindings, GAP9SoftmaxGradBindings, \
     GAP9SoftplusBindings, GAP9TransposeBindings, GAP9UniformRQSBindings, GAP9QuantBindings, GAP9SliceBindings, \
-    GAP9RQSDWConv1DBindings, GAP9DequantBindings, GAP9SSDScanBindings, GAP9Mamba3ScanBindings
+    GAP9RQSDWConv1DBindings, GAP9DequantBindings, GAP9SSDScanBindings, GAP9SSDScanNE16Bindings, GAP9Mamba3ScanBindings
 from Deeploy.Targets.Generic.TileConstraints.ConcatTileConstraint import ConcatTileConstraint
 from Deeploy.Targets.Generic.TileConstraints.iHardswishTileConstraint import iHardswishTileConstraint
 from Deeploy.Targets.Generic.TileConstraints.iRMSNormTileConstraint import iRMSNormTileConstraint
@@ -58,6 +58,7 @@ from Deeploy.Targets.PULPOpen.TileConstraints.ReduceSumTileConstraint import Red
 from Deeploy.Targets.PULPOpen.TileConstraints.RequantShiftTileConstraint import RequantShiftTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.SelectiveScanUntiledTileConstraint import SelectiveScanI16TileConstraint, SelectiveScanTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.SSDScanTileConstraint import SSDScanTileConstraint
+from Deeploy.Targets.PULPOpen.TileConstraints.SSDScanNE16TileConstraint import SSDScanNE16TileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.Mamba3ScanTileConstraint import Mamba3ScanTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.SILUTileConstraint import SILUTileConstraint
 from Deeploy.Targets.PULPOpen.TileConstraints.SliceConstraint import SliceTileConstraint
@@ -199,6 +200,8 @@ GAP9SelectiveScanTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GA
 
 GAP9SSDScanTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9SSDScanBindings,
                                                          tileConstraint = SSDScanTileConstraint())
+GAP9SSDScanNE16TilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9SSDScanNE16Bindings,
+                                                             tileConstraint = SSDScanNE16TileConstraint())
 
 GAP9QuantTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9QuantBindings,
                                                         tileConstraint = UnaryTileConstraint())

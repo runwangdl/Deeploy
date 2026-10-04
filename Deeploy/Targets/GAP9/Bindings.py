@@ -36,7 +36,7 @@ from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterTiling import 
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPL3Tiling import PULPL3Tiling
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPProfileUntiled import PULPProfileUntiled
 from Deeploy.Targets.PULPOpen.DataTypes import PULPDMAFuture
-from Deeploy.Targets.GAP9.Templates import Mamba3ScanTemplate, SelectiveScanI16Template, SelectiveScanTemplate, SSDScanTemplate
+from Deeploy.Targets.GAP9.Templates import Mamba3ScanTemplate, SelectiveScanI16Template, SelectiveScanTemplate, SSDScanNE16Template, SSDScanTemplate
 from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, FloatAddTemplate, FloatConvTemplate, \
     IntAddTemplate, \
     FloatGELUTemplate, FloatGemmTemplate, FloatLayernormTemplate, FloatMatMulTemplate, FloatMaxPoolTemplate, \
@@ -547,6 +547,19 @@ GAP9SSDScanBindings = [
             PointerClass(int32_t),
             PointerClass(int32_t)
         ], [PointerClass(int8_t)]), SSDScanTemplate.referenceTemplate, GAP9Transformer)
+]
+
+GAP9SSDScanNE16Bindings = [
+    NodeBinding(
+        PULPSSDScanChecker([
+            PointerClass(int8_t),
+            PointerClass(int8_t),
+            PointerClass(int16_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t)
+        ], [PointerClass(int8_t)]), SSDScanNE16Template.referenceTemplate, GAP9Transformer)
 ]
 
 GAP9Mamba3ScanBindings = [

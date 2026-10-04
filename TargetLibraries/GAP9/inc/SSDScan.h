@@ -10,6 +10,9 @@
 
 #include "DeeployPULPMath.h"
 
+// Q15 exp LUT (exp(x), x in [-20,0], 128 steps/unit, 2561 entries) living in L1; defined in SSDScan.c
+extern const int16_t *SSDScan_exp_lut_ptr;
+
 // gate_lut: 256-entry Q13 SiLU-gate LUT, indexed by z + 128.
 // output_requant_mul_q40: INT8 output requant multiplier (round_shift by 40).
 // h_state: [B, N_heads, Head_dim, N] recurrent state; persists across L-tiles.

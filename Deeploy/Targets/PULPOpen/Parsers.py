@@ -600,12 +600,14 @@ class PULPSelectiveScanParser(NodeParser):
 
 class PULPSSDScanParser(NodeParser):
 
+    OP_NAME = 'SSD_Scan'
+
     def __init__(self):
         super().__init__()
 
     def parseNode(self, node: gs.Node) -> bool:
         ret = all([
-            node.op == 'SSD_Scan',
+            node.op == self.OP_NAME,
             len(node.inputs) == 7,
             len(node.outputs) == 1,
             'n_groups' in node.attrs and int(node.attrs['n_groups']) == 1,
@@ -677,6 +679,12 @@ class PULPSSDScanParser(NodeParser):
             return newCtxt, True
         else:
             return ctxt, False
+
+
+class PULPSSDScanNE16Parser(PULPSSDScanParser):
+    """SSD_Scan_NE16: same inputs/attributes as SSD_Scan; the three per-head chunk products run on the
+    NE16 (per-head int8 weights, power-of-two scales), see TargetLibraries/GAP9/src/SSDScanNE16.c."""
+    OP_NAME = 'SSD_Scan_NE16'
 
 
 class PULPMamba3ScanParser(PULPSSDScanParser):

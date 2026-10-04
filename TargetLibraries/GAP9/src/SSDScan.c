@@ -9,6 +9,9 @@
 
 #include "SSDScanLUT.h"
 
+// Exported for SSDScanNE16.c (the table itself stays private to this translation unit).
+const int16_t *SSDScan_exp_lut_ptr = SSD_EXP_LUT;
+
 // Q15 fixed-point domain (matches ssd_q.py)
 #define SSD_WIDE_FRAC_BITS 15
 #define SSD_Q20 (1 << 20)

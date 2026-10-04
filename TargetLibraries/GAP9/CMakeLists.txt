@@ -92,6 +92,7 @@ set(_KERNEL_O3_FILES
   ${CMAKE_CURRENT_LIST_DIR}/src/SelectiveScan.c
   ${CMAKE_CURRENT_LIST_DIR}/src/SelectiveScanI16.c
   ${CMAKE_CURRENT_LIST_DIR}/src/SSDScan.c
+  ${CMAKE_CURRENT_LIST_DIR}/src/SSDScanNE16.c
   ${CMAKE_CURRENT_LIST_DIR}/src/Mamba3Scan.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/gemv.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Matmul.c
@@ -167,6 +168,8 @@ if(platform STREQUAL "GAP9_w_NE16")
     -Wno-incompatible-pointer-types-discards-qualifiers
   )
   target_link_libraries(deeploygap9 PUBLIC pulp-nnx)
+  # SSDScanNE16.c drives the NE16 through pulp-nnx and is compiled only on this platform
+  target_compile_definitions(deeploygap9 PUBLIC DEEPLOY_USE_NE16=1)
 endif()
 
 target_link_libraries(deeploygap9 PUBLIC pmsis)

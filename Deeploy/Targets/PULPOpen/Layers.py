@@ -132,6 +132,10 @@ class PULPSSDScanLayer(ONNXLayer):
         return B * H * numChunks * opsPerChunk
 
 
+class PULPSSDScanNE16Layer(PULPSSDScanLayer):
+    pass
+
+
 class PULPMamba3ScanLayer(PULPSSDScanLayer):
 
     def computeOps(self):

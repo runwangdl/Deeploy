@@ -34,5 +34,6 @@
 // GAP9-specific kernel prototypes.
 #include "SelectiveScan.h"
 #include "SSDScan.h"
+#include "SSDScanNE16.h"
 
 #endif // __DEEPLOY_GAP9_MATH_HEADER_
