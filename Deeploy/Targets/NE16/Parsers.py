@@ -31,6 +31,7 @@ class NE16Conv2DBaseParser(Conv2DParser):
         self.operatorRepresentation['padding_y_bottom'] = int(self.operatorRepresentation['pads'][2])
         self.operatorRepresentation['padding_x_right'] = int(self.operatorRepresentation['pads'][3])
         self.operatorRepresentation['weight_offset'] = int(node.attrs["weight_offset"])
+        self.operatorRepresentation['weight_bits'] = int(node.attrs.get("weight_bits", 8))
 
         return True
 

@@ -116,7 +116,15 @@ def _ne16_adjust_weight_memory_layout_fun(graph: gs.Graph, match: Match, name: s
     if not channels_first:
         values = values.transpose(0, 3, 1, 2)
 
-    bits = 8  # Support only 8 bit weights for now
+    # Weight bit width: node attribute `weight_bits` wins; else DEEPLOY_NE16_WBITS=<b> opts in for every
+    # 1x1 node whose offset-shifted weights fit b bits (W2A8 QAT: {-2..1} -> {0..3}); default 8.
+    bits = 8
+    wbits_env = os.environ.get("DEEPLOY_NE16_WBITS")
+    if "weight_bits" in node.attrs:
+        bits = int(node.attrs["weight_bits"])
+    elif wbits_env is not None and node.attrs['group'] == 1 and int(values.max()) < (1 << int(wbits_env)):
+        bits = int(wbits_env)
+    node.attrs["weight_bits"] = bits
     if node.attrs['group'] == 1:
         weightTensor.values = _weightEncode(values.astype(np.uint8), bits, depthwise = False)
     else:

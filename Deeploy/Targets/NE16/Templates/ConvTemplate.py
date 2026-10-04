@@ -62,7 +62,7 @@ class NE16ConvTemplate(NodeTemplate):
 
     @classmethod
     @abstractmethod
-    def getWeightStrides(cls, channel_in: int) -> Tuple[int, int, int]:
+    def getWeightStrides(cls, channel_in: int, weight_bits: int = 8) -> Tuple[int, int, int]:
         pass
 
     @classmethod
@@ -81,7 +81,8 @@ class NE16ConvTemplate(NodeTemplate):
 
         operatorRepresentation['input_bits'] = data_in._type.referencedType.typeWidth
         operatorRepresentation['output_bits'] = data_out._type.referencedType.typeWidth
-        operatorRepresentation['weight_bits'] = weight._type.referencedType.typeWidth
+        # bit-serial weights: the pass may have packed fewer planes than the storage type's width
+        operatorRepresentation['weight_bits'] = int(operatorRepresentation.get('weight_bits', weight._type.referencedType.typeWidth))
 
         operatorRepresentation["input_typeWidth_bytes"] = int(np.ceil(data_in._type.referencedType.typeWidth / 8))
         operatorRepresentation["output_typeWidth_bytes"] = int(np.ceil(data_out._type.referencedType.typeWidth / 8))
@@ -125,7 +126,8 @@ class NE16ConvTemplate(NodeTemplate):
         operatorRepresentation["bHi"] = bHi
         operatorRepresentation["bWi"] = bWi
 
-        weightStrideD0, weightStrideD1, weightStrideD2 = self.getWeightStrides(operatorRepresentation["ch_im_in"])
+        weightStrideD0, weightStrideD1, weightStrideD2 = self.getWeightStrides(operatorRepresentation["ch_im_in"],
+                                                                                operatorRepresentation["weight_bits"])
 
         operatorRepresentation["weightStrideD0"] = weightStrideD0
         operatorRepresentation["weightStrideD1"] = weightStrideD1
@@ -184,11 +186,11 @@ class NE162DPWConvTemplate(NE16ConvTemplate):
                 width_in_border)
 
     @classmethod
-    def getWeightStrides(cls, channel_in: int) -> Tuple[int, int, int]:
+    def getWeightStrides(cls, channel_in: int, weight_bits: int = 8) -> Tuple[int, int, int]:
         # NE16 PW 1x1: per (cout, cinMajor) block = bits * H*W * cinMinorBytes
         # = 8 * 1 * 2 = 16 bytes for 8-bit weights with CIN_SUBTILE=16
         n_channel_in = _getNumTiles(channel_in, 16)
-        _NE16_PW_WEIGHT_BYTES = 16  # bits * HW * cinMinorBytes = 8*1*2
+        _NE16_PW_WEIGHT_BYTES = weight_bits * 2  # bits * HW * cinMinorBytes = bits*1*2
         return _NE16_PW_WEIGHT_BYTES, _NE16_PW_WEIGHT_BYTES * n_channel_in, 0
 
     @classmethod
@@ -242,7 +244,7 @@ class NE162DDWConvTemplate(NE16ConvTemplate):
                 width_in_border)
 
     @classmethod
-    def getWeightStrides(cls, channel_in: int) -> Tuple[int, int, int]:
+    def getWeightStrides(cls, channel_in: int, weight_bits: int = 8) -> Tuple[int, int, int]:
         # Match ne16_task_set_strides for depthwise 3x3:
         #   d0 = NE16_FILTER_SIZE * NE16_FILTER_SIZE * weight_d0_stride
         #      = 3 * 3 * 2 = 18
@@ -301,7 +303,7 @@ class NE162DDenseConvTemplate(NE16ConvTemplate):
                 width_in_border)
 
     @classmethod
-    def getWeightStrides(cls, channel_in: int) -> Tuple[int, int, int]:
+    def getWeightStrides(cls, channel_in: int, weight_bits: int = 8) -> Tuple[int, int, int]:
         # Match ne16_task_set_strides for dense 3x3 (non-DW):
         #   d0 = NE16_FILTER_SIZE * NE16_FILTER_SIZE * weight_d0_stride = 18
         #   d1 = NE16_FILTER_SIZE * NE16_FILTER_SIZE * weight_d0_stride * qw * num_k_in
