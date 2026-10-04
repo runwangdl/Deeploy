@@ -10,6 +10,7 @@ from Deeploy.DeeployTypes import NetworkContext, NodeTemplate, OperatorRepresent
 
 NE16_SLOTS = 2
 META_HDR = 8
+NUM_CORES = 8
 
 
 def pixelGrid(P: int) -> Tuple[int, int]:
@@ -32,7 +33,8 @@ def scratchBytes(Q, N, P, NHt, GH, GW):
     WSZ = Q * (Q + 2 * N)
     ASZ = PXA * (2 * Q + N)
     MSZ = META_HDR + 2 * Q + N
-    return NHt * (PXA * (Q + N) + 2 * WSZ + 4 * MSZ) + 4 * NE16_SLOTS * ASZ + 4 * Q * Q
+    QM = Q * max(Q, N)
+    return NHt * (PXA * (Q + N) + 2 * WSZ + 4 * MSZ) + 4 * NE16_SLOTS * ASZ + 4 * Q * Q + 4 * NUM_CORES * QM
 
 
 class GAP9SSDScanNE16Template(NodeTemplate):
@@ -51,7 +53,8 @@ class GAP9SSDScanNE16Template(NodeTemplate):
         batchSize = operatorRepresentation['batch_size']
         GH, GW = pixelGrid(P)
         name = operatorRepresentation['nodeName']
-        return [(name + "_h_state", batchSize * NHt * P * N * 4), (name + "_gate_lut_l1", 256 * 4),
+        # state [B][NHt][P][N] int32 followed by the per-core |state| maxima [B][NHt][NUM_CORES]
+        return [(name + "_h_state", batchSize * NHt * (P * N + NUM_CORES) * 4), (name + "_gate_lut_l1", 256 * 4),
                 (name + "_ne16_scratch", scratchBytes(Q, N, P, NHt, GH, GW))]
 
     def hoistTransientBuffers(self, ctxt: NetworkContext,
