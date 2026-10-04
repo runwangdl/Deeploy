@@ -198,7 +198,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
                             const int32_t *__restrict__ D_skip, int8_t *__restrict__ y, int32_t *__restrict__ h_state,
                             const int32_t *__restrict__ gate_lut, uint8_t *__restrict__ scratch, uint32_t B_size,
                             uint32_t Q, uint32_t N, uint32_t P, uint32_t NHt, uint32_t L, uint32_t GH, uint32_t GW,
-                            int32_t output_requant_mul_q40, uint32_t init_state) {
+                            int32_t output_requant_mul_q40, uint32_t init_state, uint32_t epilogue_version) {
   const int core = (int)pi_core_id();
   const uint32_t PXA = GH * GW;
   const uint32_t d_inner = NHt * P;
@@ -216,6 +216,8 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   int32_t *meta = acc + SSDN_SLOTS * ASZ;                   // [NHt][MSZ]
   int32_t *G = meta + NHt * MSZ;                            // [Q][Q]
   int32_t *cscr = G + Q * Q + (uint32_t)core * QM;          // [NUM_CORES][QM]
+  int16_t *gm16 = (int16_t *)(G + Q * Q + NUM_CORES * QM);  // [256] epilogue v2 LUT (gate * mul folded)
+  int32_t ep2_SG = 0;
   int32_t *hmax = h_state + B_size * NHt * P * N;           // [B][NHt][NUM_CORES] per-core |state| maxima
 
   const ne16_dev_t *dev = ne16_pulp_get_dev();
@@ -226,6 +228,25 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
       ssdn_task_setup(&ssdn_tasks[s][2], N, Q, GH, GW);
     }
   }
+
+  if (epilogue_version == 2) {
+    // gm16[i] = rs(gate_lut[i] * mul, SG) with SG such that |gm16| < 2^15 (same on every core, no sync needed)
+    uint64_t mx = 0;
+    for (uint32_t i = 0; i < 256; i++) {
+      const int64_t v = (int64_t)gate_lut[i] * (int64_t)output_requant_mul_q40;
+      const uint64_t a = (uint64_t)(v < 0 ? -v : v);
+      mx = a > mx ? a : mx;
+    }
+    int bl = 0;
+    while (bl < 64 && (mx >> bl) != 0)
+      bl++;
+    ep2_SG = bl > 15 ? bl - 15 : 0;
+    for (uint32_t i = (uint32_t)core; i < 256; i += NUM_CORES) {
+      const int64_t v = (int64_t)gate_lut[i] * (int64_t)output_requant_mul_q40;
+      gm16[i] = (int16_t)(ep2_SG > 0 ? ssdn_round_shift(v, ep2_SG) : v);
+    }
+  }
+  pi_cl_team_barrier();
 
   const int number_of_chunks = (int)(L / Q);
 #if SSDN_PROFILE
@@ -386,6 +407,48 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
           // y epilogue (identical to GAP9_SSDScan_i8_i8), rows t over the cores. y = sat8(rs(y_g*mul, 40)) is
           // exactly 0 for |y_g| <= zth, which skips the second 64-bit multiply (SSD outputs are mostly zero).
           const int64_t zth = (((int64_t)1 << 39) - 1) / mul;
+          if (epilogue_version == 2) {
+            // v2: y = sat8(rs(rs(y_acc, ysh) * gm16[z], 53 - SG - ysh)), ysh from a static bound on |y_acc|
+            const int64_t b1 = sh1 >= 0 ? ((int64_t)1 << 18) << sh1 : ((int64_t)1 << 18) >> (-sh1);
+            const int64_t bN = ((int64_t)1 << 18) * (N > 16 ? N : 16) / 16;
+            const int64_t b3 = e3 >= 0 ? bN << e3 : bN >> (-e3);
+            const int64_t bound = b1 + b3 + (D_h < 0 ? -D_h : D_h) * 128;
+            int bl = 0;
+            while (bl < 64 && (bound >> bl) != 0)
+              bl++;
+            const int ysh = bl > 15 ? bl - 15 : 0;
+            const int S = 53 - ep2_SG - ysh;
+            const int sr = S > 0 ? S : 0, sl = S < 0 ? -S : 0;
+            const int32_t half = sr > 0 ? (1 << (sr - 1)) : 0;
+            // the three y_acc terms are rounded separately (ysh >= sh1, e3 by construction): all 32-bit
+            const int s1 = ysh - sh1, s3 = ysh - e3;
+            const int32_t h1 = s1 > 0 ? (1 << (s1 - 1)) : 0, h3 = s3 > 0 ? (1 << (s3 - 1)) : 0;
+            const int32_t hd = ysh > 0 ? (1 << (ysh - 1)) : 0;
+            const int32_t D32 = (int32_t)D_h;
+            for (uint32_t t = (uint32_t)core; t < Q; t += NUM_CORES) {
+              const uint32_t row = (b * L + t0 + t) * d_inner + hp * P;
+              const int8_t *xr = x + row, *zr = z + row;
+              int8_t *yr = y + row;
+              const int32_t c1 = comp1[t], c3 = comp3[t];
+              const int32_t *p1 = a1 + t, *p3 = a3 + t;
+              for (uint32_t c = 0; c < P; c++, p1 += Q, p3 += Q) {
+                const int32_t v1 = *p1 - c1;
+                const int32_t v3 = *p3 - c3;
+                const int32_t dx = D32 * (int32_t)xr[c];
+                const int32_t t1 = s1 > 0 ? (v1 >= 0 ? ((v1 + h1) >> s1) : -(((-v1) + h1) >> s1)) : v1;
+                const int32_t t3 = s3 > 0 ? (v3 >= 0 ? ((v3 + h3) >> s3) : -(((-v3) + h3) >> s3)) : v3;
+                const int32_t td = ysh > 0 ? (dx >= 0 ? ((dx + hd) >> ysh) : -(((-dx) + hd) >> ysh)) : dx;
+                const int32_t y16 = t1 + t3 + td;
+                const int32_t prod = y16 * (int32_t)gm16[(int32_t)zr[c] + 128];
+                int32_t yv;
+                if (sr > 0)
+                  yv = prod >= 0 ? ((prod + half) >> sr) : -(((-prod) + half) >> sr);
+                else
+                  yv = prod << sl;
+                yr[c] = (int8_t)(yv > 127 ? 127 : (yv < -128 ? -128 : yv));
+              }
+            }
+          } else
           for (uint32_t t = (uint32_t)core; t < Q; t += NUM_CORES) {
             const uint32_t row = (b * L + t0 + t) * d_inner + hp * P;
             const int8_t *xr = x + row, *zr = z + row;

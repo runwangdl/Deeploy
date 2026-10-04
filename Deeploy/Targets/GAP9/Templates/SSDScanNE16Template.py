@@ -34,7 +34,7 @@ def scratchBytes(Q, N, P, NHt, GH, GW):
     ASZ = PXA * (2 * Q + N)
     MSZ = META_HDR + 2 * Q + N
     QM = Q * max(Q, N)
-    return NHt * (PXA * (Q + N) + 2 * WSZ + 4 * MSZ) + 4 * NE16_SLOTS * ASZ + 4 * Q * Q + 4 * NUM_CORES * QM
+    return NHt * (PXA * (Q + N) + 2 * WSZ + 4 * MSZ) + 4 * NE16_SLOTS * ASZ + 4 * Q * Q + 4 * NUM_CORES * QM + 512
 
 
 class GAP9SSDScanNE16Template(NodeTemplate):
@@ -101,6 +101,7 @@ GAP9_SSDScanNE16_i8_i8(
     ${grid_h},
     ${grid_w},
     (int32_t) ${output_requant_mul_q40},
-    (uint32_t) ${init_state}
+    (uint32_t) ${init_state},
+    ${epilogue_version}
 );
 """)

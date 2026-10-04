@@ -635,6 +635,7 @@ class PULPSSDScanParser(NodeParser):
             if 'gate_z_scale' in node.attrs:
                 self.operatorRepresentation['gate_z_scale'] = float(node.attrs['gate_z_scale'])
             self.operatorRepresentation['output_requant_mul_q40'] = int(node.attrs['output_requant_mul_q40'])
+            self.operatorRepresentation['epilogue_version'] = int(node.attrs.get('epilogue_version', 1))
 
         return ret
 
