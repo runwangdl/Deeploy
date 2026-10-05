@@ -419,11 +419,14 @@ class Tiler():
                                 8) * nodeMemoryConstraint.tensorMemoryConstraints[
                                     memoryBlock.name].memoryConstraints[memoryLevel].multiBufferCoefficient
 
+                # L3 (HyperRAM) and uDMA copies hang on buffers that start off a 4-byte boundary: round every
+                # MiniMalloc block to 4 bytes so all offsets stay aligned (cherry-pick of a3ac6292, TrainingPlatform).
+                _alignedSize = ((int(_bufferSize) + 3) // 4) * 4
                 writer.writerow([
                     memoryBlock.name,
                     str(memoryBlock.lifetime[0]),
                     str(memoryBlock.lifetime[1] + 1),
-                    str(int(_bufferSize))
+                    str(_alignedSize)
                 ])
 
         try:

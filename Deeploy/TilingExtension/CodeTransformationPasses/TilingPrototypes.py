@@ -70,7 +70,9 @@ class ProfilingPrototypeMixIn(ABC):
     """)
 
     _measurementArrayDeclaration = NodeTemplate("""
-    uint32_t ${measurements}[${totalNumTiles}];
+    // static, not on the stack: several arrays x numTiles x 4 B per tiling level, and the L3 closure's frame sits
+    // under the L2 closure's; keeps --profileTiling builds usable with small cluster stacks (SLAVESTACKSIZE=1024).
+    static uint32_t ${measurements}[${totalNumTiles}];
     """)
 
     _stringDeclaration = NodeTemplate("""
@@ -97,9 +99,10 @@ class ProfilingPrototypeMixIn(ABC):
     _printCycleContribution = NodeTemplate("""
     uint32_t total = ${measurementInput} + ${measurementKernel} + ${measurementOutput};
     uint32_t dma = ${measurementInput} + ${measurementOutput};
-    float overhead_percentage = (total == 0) ? 0 : dma * 100.0f / total;
-    float kernel_percentage = (total == 0) ? 0 : ${measurementKernel} * 100.0f / total;
-    printf("%s%u] Total      :%6u cycles (%2.1f%% Kernel + %2.1f%% Overhead, %u + %u)\\n", ${prefixStr}, ${profileIdxVar}, total, kernel_percentage, overhead_percentage    , ${measurementKernel}, dma);
+    // Integer-only formatting: float printf pulls in a much deeper call chain on the cluster stack.
+    uint32_t overhead_pm = (total == 0) ? 0 : (uint32_t)(((uint64_t)dma * 1000u) / total);
+    uint32_t kernel_pm = (total == 0) ? 0 : (uint32_t)(((uint64_t)${measurementKernel} * 1000u) / total);
+    printf("%s%u] Total      :%6u cycles (%u.%u%% Kernel + %u.%u%% Overhead, %u + %u)\\n", ${prefixStr}, ${profileIdxVar}, total, kernel_pm / 10, kernel_pm % 10, overhead_pm / 10, overhead_pm % 10, ${measurementKernel}, dma);
     """)
 
     _printLoopTeardown = NodeTemplate("""
