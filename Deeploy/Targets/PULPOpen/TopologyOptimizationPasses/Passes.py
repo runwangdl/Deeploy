@@ -76,6 +76,15 @@ def _merge_add_rq_fun(graph: gs.Graph, match: Match, name: str):
     nodes_map = match.nodes_map
     addNode = nodes_map['add']
 
+    # RequantizedAdd takes 8-bit inputs: keep Add + RequantShift separate when an input is a 32-bit accumulator
+    # (e.g. the partial sums of a K-split MatMul/PwConv)
+    for inp in addNode.inputs:
+        t = inp
+        while len(t.inputs) == 1 and t.inputs[0].op in ("Reshape", "Squeeze", "Unsqueeze", "Transpose", "Flatten"):
+            t = t.inputs[0].inputs[0]
+        if len(t.inputs) == 1 and t.inputs[0].op in ("MatMul", "Gemm", "Conv"):
+            return graph
+
     rqDict = OrderedDict([("rqs1", None), ("rqs2", None), ("rqsOut", None)])
 
     for key, node in nodes_map.items():

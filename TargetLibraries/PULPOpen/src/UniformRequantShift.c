@@ -347,63 +347,35 @@ void UniformRequantShift_s32_s8(int32_t *data_in, int32_t size, int32_t mul,
                                 int32_t HW, int32_t input_offset,
                                 int32_t output_offset, int8_t output_min,
                                 int8_t output_max, bool rounding) {
-
-  int8_t core_id = pi_core_id();
-  int8_t log2Core = LOG2(NUM_CORES);
-  int32_t chunk = (size >> log2Core) + ((size & (NUM_CORES - 1)) != 0);
-  int32_t chunk_start = MIN(chunk * core_id, size);
-  int32_t chunk_stop = MIN(chunk_start + chunk, size + 1);
-
-  // JUNGVI: Compiler magic, don't remove the volatile keyword below
-  int32_t volatile halfChunkSize = chunk >> 1;
-  int64_t intermediate;  // 64-bit: int32 acc * mul overflows for FEMBA-scale requants (mul ~ 7e4)
-  int8_t out;
-  int32_t reg_data_in_A;
-  int32_t reg_data_in_B;
-
-  // Load step 0
-  reg_data_in_A = data_in[chunk_start];
-
-  for (int i = chunk_start; i < chunk_start + halfChunkSize; i++) {
-
-    // Load step halfChunkSize + i
-    reg_data_in_B = data_in[halfChunkSize + i];
-
-    // Compute i
-    intermediate = ((int64_t)reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((log2D > 0 ? ((int64_t)1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
-                   output_offset;
-    out = (int8_t)CLAMP(intermediate, output_min, output_max);
-    data_out[i] = out;
-
-    // Load step i + 1
-    reg_data_in_A = data_in[i + 1];
-
-    // Compute step halfChunkSize + i
-    intermediate = ((int64_t)reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((log2D > 0 ? ((int64_t)1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
-                   output_offset;
-    out = (int8_t)CLAMP(intermediate, output_min, output_max);
-    data_out[halfChunkSize + i] = out;
-  }
-
-  // Leftover computation
-  if ((chunk_stop - chunk_start) % 2) {
-
-    reg_data_in_B = data_in[chunk_stop - 1];
-    reg_data_in_A = data_in[chunk_stop];
-
-    intermediate = ((int64_t)reg_data_in_B + input_offset) * mul + add;
-    intermediate = ((intermediate + ((log2D > 0 ? ((int64_t)1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
-                   output_offset;
-    out = (int8_t)CLAMP(intermediate, output_min, output_max);
-    data_out[chunk_stop - 1] = out;
-
-    intermediate = ((int64_t)reg_data_in_A + input_offset) * mul + add;
-    intermediate = ((intermediate + ((log2D > 0 ? ((int64_t)1 << (log2D - 1)) : 0)) * rounding) >> log2D) +
-                   output_offset;
-    out = (int8_t)CLAMP(intermediate, output_min, output_max);
-    data_out[chunk_stop] = out;
+  // Same arithmetic as before: v = clamp(((in + input_offset) * mul + add + rnd) >> log2D) + output_offset,
+  // 64-bit product. The rounding term is hoisted; for 0 < log2D < 32 the shift is done on the two 32-bit
+  // words of the product (RV32 has no 64-bit shifter), with an exact out-of-range test before the clamp.
+  const int32_t core_id = pi_core_id();
+  const int32_t log2Core = LOG2(NUM_CORES);
+  const int32_t chunk = (size >> log2Core) + ((size & (NUM_CORES - 1)) != 0);
+  const int32_t start = MIN(chunk * core_id, size);
+  const int32_t stop = MIN(start + chunk, size);
+  const int64_t addr = (int64_t)add + ((rounding && log2D > 0) ? ((int64_t)1 << (log2D - 1)) : 0);
+  const int32_t lo = output_min, hi = output_max;
+  if (log2D > 0 && log2D < 32) {
+    const uint32_t sl = 32 - log2D;
+    for (int32_t i = start; i < stop; i++) {
+      const int64_t p = (int64_t)(data_in[i] + input_offset) * mul + addr;
+      const int32_t ph = (int32_t)(p >> 32);
+      const uint32_t pl = (uint32_t)p;
+      const int32_t qh = ph >> log2D;                       // high word of p >> log2D
+      int32_t v = (int32_t)((pl >> log2D) | ((uint32_t)ph << sl));
+      if (qh != (v >> 31))                                  // p >> log2D does not fit int32: saturate by sign
+        v = ph < 0 ? lo : hi;
+      v = v < lo ? lo : (v > hi ? hi : v);
+      data_out[i] = (int8_t)(v + output_offset);
+    }
+  } else {
+    for (int32_t i = start; i < stop; i++) {
+      int64_t v = (((int64_t)(data_in[i] + input_offset)) * mul + addr) >> log2D;
+      v = v < lo ? lo : (v > hi ? hi : v);
+      data_out[i] = (int8_t)(v + output_offset);
+    }
   }
 }
 // x -> x + 128 as uint8 == x ^ 0x80, 4 bytes per op. Used in front of NE16 (NE16UnsignedInputPass
