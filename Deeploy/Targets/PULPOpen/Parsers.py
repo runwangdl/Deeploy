@@ -699,13 +699,14 @@ class PULPSSDScanNE16Parser(PULPSSDScanParser):
 
     def _expectedInputs(self, node: gs.Node) -> int:
         if int(node.attrs.get('mamba3', 0)) == 1:
-            return 10
+            return 10 if int(node.attrs.get('mamba3_rope', 1)) == 1 else 9   # theta only with RoPE
         return 9 if int(node.attrs.get('decay_mode', 0)) == 1 else 7
 
     def _inputNames(self, node: gs.Node) -> List[str]:
         base = ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip']
         if int(node.attrs.get('mamba3', 0)) == 1:
-            return base + ['m3_gamma', 'm3_w', 'm3_theta']   # Mamba-3 rank 1
+            m3 = ['m3_gamma', 'm3_w'] + (['m3_theta'] if int(node.attrs.get('mamba3_rope', 1)) == 1 else [])
+            return base + m3                                    # Mamba-3 rank 1
         return base + ['dta', 'R']                          # two-scale decay (decay_mode 1)
 
     def parseNode(self, node: gs.Node) -> bool:

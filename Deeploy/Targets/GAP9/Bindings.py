@@ -613,6 +613,20 @@ GAP9SSDScanNE16Bindings = [
             PointerClass(int16_t),
             PointerClass(int16_t)
         ], [PointerClass(out_t)]), SSDScanNE16Template.referenceTemplate, GAP9Transformer) for out_t in (int8_t, int32_t)
+] + [
+    # Mamba-3 rank 1 without RoPE: + gamma, w only
+    NodeBinding(
+        PULPSSDScanChecker([
+            PointerClass(int8_t),
+            PointerClass(int8_t),
+            PointerClass(int16_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int16_t),
+            PointerClass(int16_t)
+        ], [PointerClass(out_t)]), SSDScanNE16Template.referenceTemplate, GAP9Transformer) for out_t in (int8_t, int32_t)
 ]
 
 GAP9Mamba3ScanBindings = [
