@@ -194,9 +194,9 @@ static inline int ssdn_quantise(const int32_t *scr, uint32_t rows, uint32_t cols
 
 
 typedef struct {
-  const int8_t *x, *z; int8_t *y; const int16_t *dt; const int32_t *A, *D_skip, *gate_lut, *Bk, *Ck, *G;
+  const int8_t *x, *z; void *y; const int16_t *dt; const int32_t *A, *D_skip, *gate_lut, *Bk, *Ck, *G;
   int32_t *h_state, *hmax, *acc, *meta; uint8_t *xt, *su, *wenc; int8_t *w8; const int16_t *exp_lut, *gm16;
-  int32_t ep2_SG, mul_q40; uint32_t b, L, t0, NHt, P, N, Q, PXA, WSZ, ASZ, MSZ, d_inner, epilogue_version;
+  int32_t ep2_SG, mul_q40; uint32_t b, L, t0, NHt, P, N, Q, PXA, WSZ, ASZ, MSZ, d_inner, epilogue_version, out_bits, out_shift;
 } ssdn_ctx_t;
 
 // one phase-A work item (head hh, part 0..3): own frame, so it does not add to the caller's stack
@@ -298,7 +298,7 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
 
 // finish head hh-1: y epilogue + state update (own frame)
 static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uint32_t hh, int core) {
-  const int8_t *x = cx->x, *z = cx->z; int8_t *y = cx->y; const int32_t *D_skip = cx->D_skip;
+  const int8_t *x = cx->x, *z = cx->z; int8_t *y = (int8_t *)cx->y; int32_t *y32 = (int32_t *)cx->y; const int32_t *D_skip = cx->D_skip;
   int32_t *h_state = cx->h_state; int32_t *hmax = cx->hmax; const int32_t *gate_lut = cx->gate_lut;
   const int16_t *gm16 = cx->gm16; const int32_t ep2_SG = cx->ep2_SG; const int32_t *acc = cx->acc, *meta = cx->meta;
   const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, NHt = cx->NHt, P = cx->P, N = cx->N, Q = cx->Q;
@@ -360,6 +360,23 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
         yr[c] = (int8_t)(yv > 127 ? 127 : (yv < -128 ? -128 : yv));
       }
     }
+  } else if (cx->out_bits == 32) {
+    // wide output for a following RMSNormI32: y32 = sat32(rs(y_g, out_shift)), no Q40 requant
+    const int osh = (int)cx->out_shift;
+    for (uint32_t t = (uint32_t)core; t < Q; t += NUM_CORES) {
+      const uint32_t row = (b * L + t0 + t) * d_inner + hp * P;
+      const int8_t *xr = x + row, *zr = z + row;
+      int32_t *yr = y32 + row;
+      const int32_t c1 = comp1[t], c3 = comp3[t];
+      const int32_t *p1 = a1 + t, *p3 = a3 + t;
+      for (uint32_t c = 0; c < P; c++, p1 += Q, p3 += Q) {
+        const int64_t v1 = (int64_t)(*p1 - c1);
+        const int64_t v3 = (int64_t)(*p3 - c3);
+        const int64_t y_acc = ((v1 << l1) >> r1) + ((v3 << l3) >> r3) + D_h * (int64_t)xr[c];
+        const int64_t y_g = ssdn_round_shift(y_acc * (int64_t)gate_lut[(int32_t)zr[c] + 128], 13);
+        yr[c] = ssdn_sat_i32(osh > 0 ? ssdn_round_shift(y_g, osh) : y_g);
+      }
+    }
   } else
   for (uint32_t t = (uint32_t)core; t < Q; t += NUM_CORES) {
     const uint32_t row = (b * L + t0 + t) * d_inner + hp * P;
@@ -398,10 +415,11 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
 void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restrict__ z,
                             const int16_t *__restrict__ dt, const int32_t *__restrict__ B,
                             const int32_t *__restrict__ C, const int32_t *__restrict__ A,
-                            const int32_t *__restrict__ D_skip, int8_t *__restrict__ y, int32_t *__restrict__ h_state,
+                            const int32_t *__restrict__ D_skip, void *__restrict__ y, int32_t *__restrict__ h_state,
                             const int32_t *__restrict__ gate_lut, uint8_t *__restrict__ scratch, uint32_t B_size,
                             uint32_t Q, uint32_t N, uint32_t P, uint32_t NHt, uint32_t L, uint32_t GH, uint32_t GW,
-                            int32_t output_requant_mul_q40, uint32_t init_state, uint32_t epilogue_version) {
+                            int32_t output_requant_mul_q40, uint32_t init_state, uint32_t epilogue_version,
+                            uint32_t out_bits, uint32_t out_shift) {
   const int core = (int)pi_core_id();
   const uint32_t PXA = GH * GW;
   const uint32_t d_inner = NHt * P;
@@ -455,7 +473,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
                    .h_state = h_state, .hmax = hmax, .acc = acc, .meta = meta, .xt = xt, .su = su, .wenc = wenc,
                    .w8 = w8, .exp_lut = exp_lut, .gm16 = gm16, .ep2_SG = ep2_SG, .mul_q40 = output_requant_mul_q40,
                    .L = L, .NHt = NHt, .P = P, .N = N, .Q = Q, .PXA = PXA, .WSZ = WSZ, .ASZ = ASZ, .MSZ = MSZ,
-                   .d_inner = d_inner, .epilogue_version = epilogue_version};
+                   .d_inner = d_inner, .epilogue_version = epilogue_version, .out_bits = out_bits, .out_shift = out_shift};
 
   const int number_of_chunks = (int)(L / Q);
 #if SSDN_PROFILE

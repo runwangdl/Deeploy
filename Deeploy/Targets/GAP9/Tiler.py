@@ -12,7 +12,7 @@ import copy
 
 from Deeploy.Targets.GAP9.Bindings import GAP9AddBindings, GAP9ConcatBindings, GAP9DequantBindings, \
     GAP9FloatConv2DBindings, GAP9FloatDWConv2DBindings, GAP9FloatGELUBinding, GAP9FloatGEMMBindings, \
-    GAP9GatherBindings, GAP9iHardswishBindings, GAP9iRMSNormBindings, GAP9iRQSGELUBindings, GAP9LayernormBinding, \
+    GAP9GatherBindings, GAP9iHardswishBindings, GAP9iRMSNormBindings, GAP9RMSNormI32Bindings, GAP9iRQSGELUBindings, GAP9LayernormBinding, \
     GAP9MatMulBindings, GAP9MaxPool2DBindings, GAP9MulBindings, GAP9NE16GEMMInt32Bindings, GAP9NE16RQSGEMMBindings, \
     GAP9QuantBindings, GAP9ReduceSumBindings, GAP9ReluBinding, GAP9ReshapeBindings, GAP9RQAddBindings, \
     GAP9RQSBindings, GAP9RQSConv2DBindings, GAP9RQSDWConv2DBindings, GAP9RQSGEMMBindings, GAP9RQSiHardswishBindings, \
@@ -35,6 +35,7 @@ from Deeploy.Targets.GAP9.Bindings import GAP9AddBindings, GAP9ConcatBindings, G
 from Deeploy.Targets.Generic.TileConstraints.ConcatTileConstraint import ConcatTileConstraint
 from Deeploy.Targets.Generic.TileConstraints.iHardswishTileConstraint import iHardswishTileConstraint
 from Deeploy.Targets.Generic.TileConstraints.iRMSNormTileConstraint import iRMSNormTileConstraint
+from Deeploy.Targets.PULPOpen.TileConstraints.RMSNormI32TileConstraint import RMSNormI32TileConstraint
 from Deeploy.Targets.Generic.TileConstraints.MulTileConstraint import MulTileConstraint
 from Deeploy.Targets.Generic.TileConstraints.NOPTileConstraint import NOPTileConstraint
 from Deeploy.Targets.Generic.TileConstraints.RQSiGELUTileConstraint import RQSiGELUTileConstraint
@@ -145,6 +146,8 @@ GAP9ConcatTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9Conca
 
 GAP9iRMSNormTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9iRMSNormBindings,
                                                           tileConstraint = iRMSNormTileConstraint())
+GAP9RMSNormI32TilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9RMSNormI32Bindings,
+                                                            tileConstraint = RMSNormI32TileConstraint())
 
 GAP9iRQSGELUTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9iRQSGELUBindings,
                                                           tileConstraint = RQSiGELUTileConstraint())

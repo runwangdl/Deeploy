@@ -212,6 +212,14 @@ def _merge_gemm_rq_fun(graph: gs.Graph, match: Match, name: str):
     gemm = matched_nodes[0]
     rqs = matched_nodes[1]
 
+    # RequantizedGemm kernels take int8 activations: keep MatMul + RequantShift separate when A is the wide
+    # (out_bits > 8, int32 tensor) output of a scan op, e.g. the FEMBA Mamba-2 classifier's SelectiveScanI16
+    a = gemm.inputs[0]
+    while len(a.inputs) == 1 and a.inputs[0].op in ("Reshape", "Squeeze", "Unsqueeze", "Transpose", "Flatten"):
+        a = a.inputs[0].inputs[0]
+    if len(a.inputs) == 1 and int(a.inputs[0].attrs.get("out_bits", 8)) > 8:
+        return graph
+
     totalShift = int(np.log2(rqs.attrs['div'].values))
 
     rqs.inputs[-1].values = copy.deepcopy(rqs.inputs[-1].values) + 2**(totalShift - 1)

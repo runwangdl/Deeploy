@@ -56,7 +56,7 @@ GAP9_SelectiveScanI16_i8_i8(
     (const int8_t  *) ${shA},
     (const uint8_t *) ${sH},
     (const uint8_t *) ${ysh},
-    (int8_t        *) ${y},
+    (void          *) ${y},
     (int16_t       *) ${h_buffer},
     (int16_t       *) ${bc16},
     (const int32_t *) ${gate_lut_l1},
@@ -66,6 +66,8 @@ GAP9_SelectiveScanI16_i8_i8(
     ${d_state},
     ${bc_shift},
     (int32_t) ${output_requant_mul_q40},
-    (uint32_t) ${is_first_L_tile}
+    (uint32_t) ${is_first_L_tile},
+    ${out_bits},
+    ${out_shift}
 );
 """)

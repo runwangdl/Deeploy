@@ -181,18 +181,28 @@ class PULPSelectiveScanChecker(SignPropTypeChecker):
         return True
 
 
-class PULPSelectiveScanI16Checker(PULPSelectiveScanChecker):
+class _WideOutMixin:
+    """Scan ops with an optional wide output (attr out_bits = 16/32 -> int32 tensor): the binding whose output
+    width matches out_bits is the one that type-checks, and the int32 output gets 2^32 levels."""
+
+    def _wantWidth(self, operatorRepresentation):
+        return 8 if int(operatorRepresentation.get('out_bits', 8)) == 8 else 32
+
+    def _inferNumLevels(self, inputs, operatorRepresentation):
+        return [2**32] if self._wantWidth(operatorRepresentation) == 32 else [inputs[0].nLevels]
+
+    def checkOutputType(self, inputs, operatorRepresentation) -> bool:
+        return self.output_types[0].referencedType.typeWidth == self._wantWidth(operatorRepresentation)
+
+
+class PULPSelectiveScanI16Checker(_WideOutMixin, PULPSelectiveScanChecker):
     pass
 
 
-class PULPSSDScanChecker(SignPropTypeChecker):
+class PULPSSDScanChecker(_WideOutMixin, SignPropTypeChecker):
 
     def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):
         super().__init__(input_types, output_types)
-
-    def _inferNumLevels(self, inputs: List[VariableBuffer],
-                        operatorRepresentation: OperatorRepresentation) -> List[int]:
-        return [inputs[0].nLevels]
 
     def _inferSignedness(self, inputs: List[VariableBuffer],
                          operatorRepresentation: OperatorRepresentation) -> List[bool]:
@@ -201,13 +211,21 @@ class PULPSSDScanChecker(SignPropTypeChecker):
         else:
             return [False]
 
-    # Override this. This should compute the signednes of each output node of the Layer
-    def checkOutputType(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> bool:
-
-        return True
-
 
 class PULPMamba3ScanChecker(PULPSSDScanChecker):
     # Same contract as SSDScan: int8 in, int8 out, signedness from x. The two extra int16
     # inputs (lam, theta) do not affect the output type.
     pass
+
+
+class PULPRMSNormI32Checker(SignPropTypeChecker):
+    """RMSNormI32: int32 in (any scale), int8 out with 256 signed levels"""
+
+    def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):
+        super().__init__(input_types, output_types)
+
+    def _inferNumLevels(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> List[int]:
+        return [256]
+
+    def _inferSignedness(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> List[bool]:
+        return [True]

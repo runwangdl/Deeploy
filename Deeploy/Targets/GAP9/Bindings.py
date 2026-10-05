@@ -36,6 +36,7 @@ from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterTiling import 
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPL3Tiling import PULPL3Tiling
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPProfileUntiled import PULPProfileUntiled
 from Deeploy.Targets.PULPOpen.DataTypes import PULPDMAFuture
+from Deeploy.Targets.PULPOpen.Templates import RMSNormI32Template
 from Deeploy.Targets.GAP9.Templates import Mamba3ScanTemplate, SelectiveScanI16Template, SelectiveScanTemplate, SSDScanNE16Template, SSDScanTemplate
 from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, FloatAddTemplate, FloatConvTemplate, \
     IntAddTemplate, \
@@ -48,7 +49,7 @@ from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, F
     TransposeTemplate, UniformRequantShiftTemplate, iRMSNormTemplate, iSoftmaxTemplate, iLayernormTemplate, \
     QuantTemplate, DequantTemplate
 from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker, PULPLinearChecker, PULPMaxPoolChecker, \
-    PULPMamba3ScanChecker, PULPRequantShiftChecker, PULPSelectiveScanChecker, PULPSelectiveScanI16Checker, PULPSoftplusChecker, PULPSSDScanChecker
+    PULPMamba3ScanChecker, PULPRMSNormI32Checker, PULPRequantShiftChecker, PULPSelectiveScanChecker, PULPSelectiveScanI16Checker, PULPSoftplusChecker, PULPSSDScanChecker
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingVariableReplacement import TilingVariableReplacement, \
     TilingVariableReplacementUpdate
 
@@ -438,6 +439,11 @@ GAP9iRMSNormBindings = [
                 iRMSNormTemplate.referenceTemplate, GAP9Transformer)
 ]
 
+GAP9RMSNormI32Bindings = [
+    NodeBinding(PULPRMSNormI32Checker([PointerClass(int32_t), PointerClass(int32_t)], [PointerClass(int8_t)]),
+                RMSNormI32Template.referenceTemplate, GAP9Transformer)
+]
+
 GAP9iHardswishBindings = [
     NodeBinding(HardswishChecker([PointerClass(int8_t)], [PointerClass(int32_t)]), iHardswishTemplate.referenceTemplate,
                 GAP9ClusterTransformer)
@@ -535,8 +541,9 @@ GAP9SelectiveScanI16Bindings = [
             PointerClass(shA_t),     # shA = 8 - sA (signed, small)
             PointerClass(sh_t),      # sH
             PointerClass(sh_t),      # ysh = sH + bc_shift
-        ], [PointerClass(int8_t)]), SelectiveScanI16Template.referenceTemplate, GAP9Transformer)
+        ], [PointerClass(out_t)]), SelectiveScanI16Template.referenceTemplate, GAP9Transformer)
     # constants are typed by value range by Deeploy: accept the narrow signed/unsigned 8-bit types
+    for out_t in (int8_t, int32_t)
     for shA_t in [int8_t, uint8_t]
     for sh_t in [uint8_t, int8_t]
 ]
@@ -564,7 +571,7 @@ GAP9SSDScanNE16Bindings = [
             PointerClass(int32_t),
             PointerClass(int32_t),
             PointerClass(int32_t)
-        ], [PointerClass(int8_t)]), SSDScanNE16Template.referenceTemplate, GAP9Transformer)
+        ], [PointerClass(out_t)]), SSDScanNE16Template.referenceTemplate, GAP9Transformer) for out_t in (int8_t, int32_t)
 ]
 
 GAP9Mamba3ScanBindings = [

@@ -17,7 +17,7 @@ from Deeploy.Targets.GAP9.Templates import AllocateTemplate, FreeTemplate
 from Deeploy.Targets.GAP9.Tiler import DeQuantTilingReadyBindings, GAP9AddTilingReadyBindings, \
     GAP9ConcatTilingReadyBindings, GAP9Conv2DTilingReadyBindings, GAP9DWConv2DTilingReadyBindings, \
     GAP9FlattenTilingReadyBindings, GAP9FPGELUTilingReadyBindings, GAP9FPGEMMTilingReadyBindings, \
-    GAP9GatherTilingReadyBindings, GAP9iHardswishTilingReadyBindings, GAP9iRMSNormTilingReadyBindings, \
+    GAP9GatherTilingReadyBindings, GAP9iHardswishTilingReadyBindings, GAP9iRMSNormTilingReadyBindings, GAP9RMSNormI32TilingReadyBindings, \
     GAP9iRQSGELUTilingReadyBindings, GAP9LayernormTilingReadyBindings, GAP9MatMulTilingReadyBindings, \
     GAP9MaxPool2DTilingReadyBindings, GAP9MulTilingReadyBindings, GAP9NE16GEMMInt32TilingReadyBindings, \
     GAP9NE16RQSGEMMTilingReadyBindings, GAP9ReduceSumTilingReadyBindings, GAP9ReluTilingReadyBindings, \
@@ -78,7 +78,7 @@ from Deeploy.Targets.PULPOpen.Layers import PULPRQSConvLayer, PULPRQSGEMMLayer, 
     PULPSoftplusLayer, PULPSSDScanLayer, PULPSSDScanNE16Layer, PULPMamba3ScanLayer
 from Deeploy.Targets.PULPOpen.Parsers import PULPConv1DParser, PULPConv2DParser, PULPDWConv1DParser, \
     PULPDWConv2DParser, PULPFPConv2DParser, PULPFPDWConv2DParser, PULPGEMMParser, PULPMatrixVecParser, \
-    PULPReduceMeanParser, PULPSelectiveScanI16Parser, PULPSelectiveScanParser, PULPSoftplusParser, PULPSSDScanParser, PULPSSDScanNE16Parser, PULPMamba3ScanParser, PULPTallGEMMParser
+    PULPReduceMeanParser, PULPSelectiveScanI16Parser, PULPSelectiveScanParser, PULPSoftplusParser, PULPSSDScanParser, PULPSSDScanNE16Parser, PULPRMSNormI32Parser, PULPMamba3ScanParser, PULPTallGEMMParser
 
 # Create GAP9-specific NodeMappers
 GAP9_RQAddMapper = NodeMapper(RQAddParser(), GAP9RQAddTilingReadyBindings)
@@ -121,6 +121,7 @@ GAP9_ConcatMapper = NodeMapper(ConcatParser(), GAP9ConcatTilingReadyBindings)
 GAP9_DMASliceMapper = NodeMapper(SliceParser(), PULPDMASliceBindings)
 GAP9_SliceMapper = NodeMapper(SliceParser(), GAP9SliceTilingReadyBindings)
 GAP9_iRMSNormMapper = NodeMapper(iRMSNormParser(), GAP9iRMSNormTilingReadyBindings)
+GAP9_RMSNormI32Mapper = NodeMapper(PULPRMSNormI32Parser(), GAP9RMSNormI32TilingReadyBindings)
 GAP9_iHardswishMapper = NodeMapper(iHardswishParser(), GAP9iHardswishTilingReadyBindings)
 GAP9_RQSiHardswishMapper = NodeMapper(RQSiHardswishParser(), GAP9RQSiHardswishTilingReadyBindings)
 GAP9_SoftmaxCrossEntropyLossMapper = NodeMapper(SoftmaxCrossEntropyLossParser(),
@@ -273,6 +274,8 @@ GAP9Mapping = {
         PULPSelectiveScanI16Layer([GAP9_SelectiveScanI16Mapper]),
     'SSD_Scan':
         PULPSSDScanLayer([GAP9_SSDScanMapper]),
+    'RMSNormI32':
+        iRMSNormLayer([GAP9_RMSNormI32Mapper]),
     'SSD_Scan_NE16':
         PULPSSDScanNE16Layer([GAP9_SSDScanNE16Mapper]),
     'Mamba3_Scan':

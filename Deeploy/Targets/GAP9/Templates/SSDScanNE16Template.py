@@ -88,7 +88,7 @@ GAP9_SSDScanNE16_i8_i8(
     (const int32_t *) ${C},
     (const int32_t *) ${A},
     (const int32_t *) ${D_skip},
-    (int8_t *) ${y},
+    (void *) ${y},
     (int32_t *) ${h_state},
     (const int32_t *) ${gate_lut_l1},
     (uint8_t *) ${ne16_scratch},
@@ -102,6 +102,8 @@ GAP9_SSDScanNE16_i8_i8(
     ${grid_w},
     (int32_t) ${output_requant_mul_q40},
     (uint32_t) ${init_state},
-    ${epilogue_version}
+    ${epilogue_version},
+    ${out_bits},
+    ${out_shift}
 );
 """)

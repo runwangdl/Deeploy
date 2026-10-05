@@ -715,12 +715,18 @@ class SILUParser(NodeParser):
             scale_out = float(scales[1])
 
             lut_name = node.name + '_silu_lut'
+            fn = node.attrs.get('function', 'silu')
+            fn = fn.decode() if isinstance(fn, bytes) else str(fn)
             if lut_name not in ctxt.globalObjects:
                 indices = np.arange(256, dtype=np.float64)
                 x_int8 = indices - 128.0
                 x_fp32 = x_int8 * scale_in
-                sigmoid_x = 1.0 / (1.0 + np.exp(-np.clip(x_fp32, -88.0, 88.0)))
-                y_fp32 = x_fp32 * sigmoid_x
+                if fn == 'gelu':  # same 256-entry LUT machinery, exact-erf GELU (FEMBA classifier head)
+                    import math
+                    y_fp32 = 0.5 * x_fp32 * (1.0 + np.vectorize(math.erf)(x_fp32 / math.sqrt(2.0)))
+                else:
+                    sigmoid_x = 1.0 / (1.0 + np.exp(-np.clip(x_fp32, -88.0, 88.0)))
+                    y_fp32 = x_fp32 * sigmoid_x
                 y_int = np.round(y_fp32 / scale_out).astype(np.int64)
                 y_int = np.clip(y_int, -128, 127)
                 lut_values = y_int.astype(np.int8)

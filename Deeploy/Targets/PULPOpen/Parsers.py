@@ -636,6 +636,8 @@ class PULPSSDScanParser(NodeParser):
                 self.operatorRepresentation['gate_z_scale'] = float(node.attrs['gate_z_scale'])
             self.operatorRepresentation['output_requant_mul_q40'] = int(node.attrs['output_requant_mul_q40'])
             self.operatorRepresentation['epilogue_version'] = int(node.attrs.get('epilogue_version', 1))
+            self.operatorRepresentation['out_bits'] = int(node.attrs.get('out_bits', 8))
+            self.operatorRepresentation['out_shift'] = int(node.attrs.get('out_shift', 0))
 
         return ret
 
@@ -763,6 +765,8 @@ class PULPSelectiveScanI16Parser(PULPSelectiveScanParser):
             self.operatorRepresentation.setdefault('bc_shift', 6)
             if 'gate_z_scale' in node.attrs:
                 self.operatorRepresentation['gate_z_scale'] = float(node.attrs['gate_z_scale'])
+            self.operatorRepresentation['out_bits'] = int(node.attrs.get('out_bits', 8))
+            self.operatorRepresentation['out_shift'] = int(node.attrs.get('out_shift', 0))
         return ret
 
     def parseNodeCtxt(self,
@@ -791,3 +795,26 @@ class PULPSelectiveScanI16Parser(PULPSelectiveScanParser):
             gate_lut_buf._memoryLevel = "L2"
         self.operatorRepresentation['gate_lut'] = lut_name
         return newCtxt, True
+
+
+class PULPRMSNormI32Parser(NodeParser):
+    """RMSNormI32: int32 in (any scale), int32 per-channel weight, int8 out; attr out_shift. Row-wise over the
+    last dimension. Kernel PULP_RMSNormI32_s32_s8 (TargetLibraries/PULPOpen/src/RMSNormI32.c)."""
+
+    def __init__(self):
+        super().__init__()
+
+    def parseNode(self, node: gs.Node) -> bool:
+        ret = node.op == 'RMSNormI32' and len(node.inputs) == 2 and len(node.outputs) == 1 and 'out_shift' in node.attrs
+        if ret:
+            self.operatorRepresentation['out_shift'] = int(node.attrs['out_shift'])
+        return ret
+
+    def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node, channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        for idx, name in enumerate(['data_in', 'weight']):
+            self.operatorRepresentation[name] = ctxt.lookup(node.inputs[idx].name).name
+        self.operatorRepresentation['data_out'] = ctxt.lookup(node.outputs[0].name).name
+        shape = list(ctxt.lookup(node.inputs[0].name).shape)
+        self.operatorRepresentation['inputSize'] = int(np.prod(shape))
+        self.operatorRepresentation['lastDimLength'] = int(shape[-1])
+        return ctxt, True

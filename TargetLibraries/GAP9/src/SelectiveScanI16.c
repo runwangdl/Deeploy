@@ -40,6 +40,19 @@ static inline int32_t _i16_clip16(int32_t v) {
 }
 
 
+// store one output: out_bits 8 -> int8 Q40 requant (default); otherwise int32 tensor holding
+// sat_{out_bits}(rs(y_gated, out_shift)) (wide output for an int32 x int8 out_proj, FEMBA Mamba-2 classifier head)
+static inline void _i16_store(void *y, uint32_t i, int64_t y_gated, int32_t mul_q40, uint32_t out_bits, uint32_t out_shift) {
+  if (out_bits == 8) {
+    int64_t v = _i16_round_shift_i64(y_gated * (int64_t)mul_q40, 40);
+    ((int8_t *)y)[i] = (int8_t)(v > 127 ? 127 : (v < -128 ? -128 : v));
+  } else {
+    const int64_t lim = ((int64_t)1 << (out_bits - 1)) - 1;
+    int64_t v = out_shift ? _i16_round_shift_i64(y_gated, (int)out_shift) : y_gated;
+    ((int32_t *)y)[i] = (int32_t)(v > lim ? lim : (v < -lim - 1 ? -lim - 1 : v));
+  }
+}
+
 static int8_t __attribute__((unused)) _i16_output(int32_t acc, int32_t sh_y, int32_t d_skip_val, int32_t x_val,
                                                     int32_t gate, int32_t output_requant_mul_q40) {
   int64_t y_acc = (((int64_t)acc) << sh_y) >> 15;
@@ -52,8 +65,9 @@ static int8_t __attribute__((unused)) _i16_output(int32_t acc, int32_t sh_y, int
 static void __attribute__((noinline)) _i16_scan_generic(
     const int8_t *x, const int8_t *z, const int16_t *dt, const int16_t *B16, const int16_t *C16,
     const int16_t *A16, const int32_t *D_skip, const int8_t *shA, const uint8_t *sH, const uint8_t *ysh,
-    int8_t *y, int16_t *h_buffer, const int32_t *gate_lut, const int16_t *exp_lut, uint32_t L,
-    uint32_t D_inner, uint32_t N, int32_t NB, int32_t output_requant_mul_q40, uint32_t D_start, uint32_t D_end) {
+    void *y, int16_t *h_buffer, const int32_t *gate_lut, const int16_t *exp_lut, uint32_t L,
+    uint32_t D_inner, uint32_t N, int32_t NB, int32_t output_requant_mul_q40, uint32_t D_start, uint32_t D_end,
+    uint32_t out_bits, uint32_t out_shift) {
   const int32_t dB_half = (NB > 0) ? (1 << (NB - 1)) : 0;
   const int32_t exp_off = I16_RANGE_Q15 + I16_HALF_Q15;
   for (uint32_t d = D_start; d < D_end; d++) {
@@ -80,7 +94,11 @@ static void __attribute__((noinline)) _i16_scan_generic(
         h_l[n] = hn;
         acc += hn * (int32_t)C_row[n];
       }
-      y[t * D_inner + d] = _i16_output(acc, sh_y, d_skip_val, x_val, gate_lut[z_val + 128], output_requant_mul_q40);
+      {
+        int64_t y_acc = ((((int64_t)acc) << sh_y) >> 15) + (int64_t)d_skip_val * (int64_t)x_val;
+        _i16_store(y, t * D_inner + d, _i16_round_shift_i64(y_acc * (int64_t)gate_lut[z_val + 128], 13),
+                   output_requant_mul_q40, out_bits, out_shift);
+      }
     }
     for (uint32_t n = 0; n < N; n++)
       h_row[n] = (int16_t)h_l[n];
@@ -93,11 +111,11 @@ void GAP9_SelectiveScanI16_i8_i8(
     const int32_t *__restrict__ C, const int16_t *__restrict__ A16,
     const int32_t *__restrict__ D_skip, const int8_t *__restrict__ shA,
     const uint8_t *__restrict__ sH, const uint8_t *__restrict__ ysh,
-    int8_t *__restrict__ y, int16_t *__restrict__ h_buffer,
+    void *__restrict__ y, int16_t *__restrict__ h_buffer,
     int16_t *__restrict__ BC16, /* scratch [2][L][N] */
     const int32_t *__restrict__ gate_lut, const int16_t *__restrict__ exp_lut,
     uint32_t L, uint32_t D_inner, uint32_t N, uint32_t bc_shift,
-    int32_t output_requant_mul_q40, uint32_t is_first_L_tile) {
+    int32_t output_requant_mul_q40, uint32_t is_first_L_tile, uint32_t out_bits, uint32_t out_shift) {
   const uint32_t core_id = pi_core_id();
   const uint32_t D_chunk = (D_inner >> 3) + ((D_inner & 7) != 0);
   const uint32_t D_start = (core_id * D_chunk < D_inner) ? core_id * D_chunk : D_inner;
@@ -124,7 +142,7 @@ void GAP9_SelectiveScanI16_i8_i8(
   const int32_t NB = 8 - (int32_t)bc_shift;
   if (N != 16 || NB != 2) {
     _i16_scan_generic(x, z, dt, B16, C16, A16, D_skip, shA, sH, ysh, y, h_buffer, gate_lut, exp_lut, L, D_inner, N, NB,
-                      output_requant_mul_q40, D_start, D_end);
+                      output_requant_mul_q40, D_start, D_end, out_bits, out_shift);
     pi_cl_team_barrier();
     return;
   }
@@ -135,7 +153,7 @@ void GAP9_SelectiveScanI16_i8_i8(
     const int32_t sh_a = shA[d];
     if (sh_a < 0) {
       _i16_scan_generic(x, z, dt, B16, C16, A16, D_skip, shA, sH, ysh, y, h_buffer, gate_lut, exp_lut, L, D_inner, 16, 2,
-                        output_requant_mul_q40, d, d + 1);
+                        output_requant_mul_q40, d, d + 1, out_bits, out_shift);
       continue;
     }
     int32_t h_l[16];
@@ -168,9 +186,7 @@ void GAP9_SelectiveScanI16_i8_i8(
       int64_t y_acc = (((int64_t)acc) << sh_y) >> 15;
       y_acc += (int64_t)d_skip_val * (int64_t)x_val;
       const int64_t y_gated = _i16_round_shift_i64(y_acc * (int64_t)gate_lut[z_val + 128], 13);
-      int64_t y_out = _i16_round_shift_i64(y_gated * (int64_t)output_requant_mul_q40, 40);
-      y_out = y_out > 127 ? 127 : (y_out < -128 ? -128 : y_out);
-      y[t * D_inner + d] = (int8_t)y_out;
+      _i16_store(y, t * D_inner + d, y_gated, output_requant_mul_q40, out_bits, out_shift);
     }
     for (uint32_t n = 0; n < 16; n++)
       h_row[n] = (int16_t)h_l[n];

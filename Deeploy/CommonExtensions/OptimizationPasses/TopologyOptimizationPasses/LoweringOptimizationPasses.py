@@ -522,6 +522,10 @@ def _matmul_to_pw_fun(graph: gs.Graph, match: Match, name: str):
     producer = _realProducer(matrixA)
     if producer is not None and producer.op in ("MatMul", "Gemm", "Conv"):
         return graph
+    # scan ops with a wide output (attr out_bits > 8, e.g. the FEMBA Mamba-2 classifier's SelectiveScanI16) also
+    # hand a 32-bit tensor to the next MatMul
+    if producer is not None and int(producer.attrs.get("out_bits", 8)) > 8:
+        return graph
 
     M, N = matrixA.shape[-2], matrixY.shape[-1]
     if not (isinstance(M, int) and isinstance(N, int)) or M < 9 or N < 8:

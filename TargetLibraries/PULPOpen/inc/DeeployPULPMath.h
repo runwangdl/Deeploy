@@ -27,6 +27,7 @@
 #include "kernel/Dequant.h"
 #include "kernel/GELU.h"
 #include "kernel/Layernorm.h"
+#include "kernel/RMSNormI32.h"
 #include "kernel/Matmul.h"
 #include "kernel/MaxPool.h"
 #include "kernel/Quant.h"
