@@ -27,12 +27,12 @@ def pixelGrid(P: int) -> Tuple[int, int]:
     return best[1], best[2]
 
 
-def scratchBytes(Q, N, P, NHt, GH, GW):
+def scratchBytes(Q, N, P, NHt, GH, GW, decay_mode = 0):
     """Mirrors the carve-up in GAP9_SSDScanNE16_i8_i8 (NHt may be a solver variable)."""
     PXA = GH * GW
     WSZ = Q * (Q + 2 * N)
     ASZ = PXA * (2 * Q + N)
-    MSZ = META_HDR + 2 * Q + N
+    MSZ = META_HDR + 2 * Q + N + (2 * Q if decay_mode == 1 else 0)
     QM = Q * max(Q, N)
     return NHt * (PXA * (Q + N) + 2 * WSZ + 4 * MSZ) + 4 * NE16_SLOTS * ASZ + 4 * Q * Q + 4 * NUM_CORES * (QM + Q) + 512
 
@@ -55,7 +55,8 @@ class GAP9SSDScanNE16Template(NodeTemplate):
         name = operatorRepresentation['nodeName']
         # state [B][NHt][P][N] int32 followed by the per-core |state| maxima [B][NHt][NUM_CORES]
         return [(name + "_h_state", batchSize * NHt * (P * N + NUM_CORES) * 4), (name + "_gate_lut_l1", 256 * 4),
-                (name + "_ne16_scratch", scratchBytes(Q, N, P, NHt, GH, GW))]
+                (name + "_ne16_scratch",
+                 scratchBytes(Q, N, P, NHt, GH, GW, int(operatorRepresentation.get('decay_mode', 0))))]
 
     def hoistTransientBuffers(self, ctxt: NetworkContext,
                               operatorRepresentation: OperatorRepresentation) -> Tuple[NetworkContext, Dict, List[str]]:
@@ -104,6 +105,10 @@ GAP9_SSDScanNE16_i8_i8(
     (uint32_t) ${init_state},
     ${epilogue_version},
     ${out_bits},
-    ${out_shift}
+    ${out_shift},
+    (const int16_t *) ${dta},
+    (const int8_t *) ${R},
+    ${decay_mode},
+    ${resid_mul}
 );
 """)

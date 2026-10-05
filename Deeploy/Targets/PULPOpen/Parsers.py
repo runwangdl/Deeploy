@@ -605,10 +605,13 @@ class PULPSSDScanParser(NodeParser):
     def __init__(self):
         super().__init__()
 
+    def _expectedInputs(self, node: gs.Node) -> int:
+        return 7
+
     def parseNode(self, node: gs.Node) -> bool:
         ret = all([
             node.op == self.OP_NAME,
-            len(node.inputs) == 7,
+            len(node.inputs) == self._expectedInputs(node),
             len(node.outputs) == 1,
             'n_groups' in node.attrs and int(node.attrs['n_groups']) == 1,
         ])
@@ -650,7 +653,7 @@ class PULPSSDScanParser(NodeParser):
 
         if ret:
             # ONNX input order matches [x, z, dt, B, C, A, D_skip]
-            inputs = ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip']
+            inputs = ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip', 'dta', 'R']  # dta, R: SSD_Scan_NE16 decay_mode 1
             outputs = ['y']
 
             for idx, inputNode in enumerate(node.inputs):
@@ -686,8 +689,30 @@ class PULPSSDScanParser(NodeParser):
 
 class PULPSSDScanNE16Parser(PULPSSDScanParser):
     """SSD_Scan_NE16: same inputs/attributes as SSD_Scan; the three per-head chunk products run on the
-    NE16 (per-head int8 weights, power-of-two scales), see TargetLibraries/GAP9/src/SSDScanNE16.c."""
+    NE16 (per-head int8 weights, power-of-two scales), see TargetLibraries/GAP9/src/SSDScanNE16.c.
+    decay_mode=1 (two-scale decay): two more inputs, dta int16 Q8 [B,L,1] (shared decay step gain) and
+    R int8 [B,L,H] (residual gates, round(127 sigmoid)), attr resid_mul; A holds the shared A repeated per head."""
     OP_NAME = 'SSD_Scan_NE16'
+
+    def _expectedInputs(self, node: gs.Node) -> int:
+        return 9 if int(node.attrs.get('decay_mode', 0)) == 1 else 7
+
+    def parseNode(self, node: gs.Node) -> bool:
+        ret = super().parseNode(node)
+        if ret:
+            self.operatorRepresentation['decay_mode'] = int(node.attrs.get('decay_mode', 0))
+            self.operatorRepresentation['resid_mul'] = int(node.attrs.get('resid_mul', 0))
+        return ret
+
+    def parseNodeCtxt(self,
+                      ctxt: NetworkContext,
+                      node: gs.Node,
+                      channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        newCtxt, ret = super().parseNodeCtxt(ctxt, node, channels_first)
+        if ret and self.operatorRepresentation.get('decay_mode', 0) != 1:
+            self.operatorRepresentation['dta'] = 'NULL'
+            self.operatorRepresentation['R'] = 'NULL'
+        return newCtxt, ret
 
 
 class PULPMamba3ScanParser(PULPSSDScanParser):

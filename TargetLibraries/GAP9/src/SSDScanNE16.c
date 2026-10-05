@@ -200,7 +200,10 @@ typedef struct {
   const int8_t *x, *z; void *y; const int16_t *dt; const int32_t *A, *D_skip, *gate_lut, *Bk, *Ck, *G;
   int32_t *h_state, *hmax, *acc, *meta; uint8_t *xt, *su, *wenc; int8_t *w8; const int16_t *exp_lut, *gm16;
   int32_t ep2_SG, mul_q40; uint32_t b, L, t0, NHt, P, N, Q, PXA, WSZ, ASZ, MSZ, d_inner, epilogue_version, out_bits, out_shift;
+  const int16_t *dta; const int8_t *R; uint32_t decay_mode; int32_t resid_mul;  // two-scale decay (decay_mode 1)
 } ssdn_ctx_t;
+// one shared context in L1 (same values on every core; core 0 writes it, the following barriers order the reads)
+static PI_L1 ssdn_ctx_t ssdn_cx;
 
 // one phase-A work item (head hh, part 0..3): own frame, so it does not add to the caller's stack
 static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uint32_t it, int32_t *cscr) {
@@ -217,6 +220,65 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
   int8_t *W1 = w8 + hh * WSZ, *W2 = W1 + Q * Q, *W3 = W2 + N * Q;
   uint8_t *we = wenc + hh * WSZ;
   const int16_t *dth = dt + (b * L + t0) * NHt + hh; // stride NHt
+  const uint32_t ts = cx->decay_mode == 1;
+
+  if (ts && part == 3) {
+    // two-scale data item for head hh: rho = cumsum(-asr(R*rmul, 8)); gx[s] = e(rho_Q - rho_s); f1 = 2^30 / gx;
+    // f3 = e(rho_t); dec = e(Lam_Q + rho_Q) (Lam_Q from the shared item, recomputed here: cheap); xt = qshift(asr(x*dt*gx, 15))
+    int32_t *f1 = comp3 + Q, *f3 = f1 + Q;
+    int32_t *gx = lam;  // per-core scratch
+    {
+      const int8_t *Rh = cx->R + (b * L + t0) * NHt + hh;
+      int32_t rho = 0, lamQ = 0;
+      const int64_t A0 = (int64_t)A[0];
+      const int16_t *dta = cx->dta + (b * L + t0);
+      for (uint32_t t = 0; t < Q; t++) {
+        rho -= (int32_t)(((int32_t)Rh[t * NHt] * cx->resid_mul) >> 8);
+        f3[t] = ssdn_expq(exp_lut, rho);
+        gx[t] = rho;  // rho_t for now
+        lamQ += (int32_t)(((int64_t)dta[t] * A0) >> 8);
+      }
+      const int32_t rhoQ = gx[Q - 1];
+      for (uint32_t t = 0; t < Q; t++) {
+        const int32_t g = (t + 1 < Q) ? ssdn_expq(exp_lut, rhoQ - gx[t]) : SSDN_ONE_Q15;
+        gx[t] = g;
+        f1[t] = (int32_t)(((uint32_t)1 << 30) / (uint32_t)g);
+      }
+      mt[4] = ssdn_expq(exp_lut, lamQ + rhoQ);
+    }
+    // state -> S8 (+128)
+    uint32_t mx = 0;
+    for (uint32_t i = 0; i < NUM_CORES; i++) {
+      const uint32_t m = (uint32_t)hmax[(b * NHt + hh) * NUM_CORES + i];
+      mx = m > mx ? m : mx;
+    }
+    const int shs = ssdn_pow2_exp(mx);
+    const int32_t *hs = h_state + (b * NHt + hh) * P * N;
+    uint8_t *su_h = su + hh * PXA * N;
+    for (uint32_t i = 0; i < P * N; i++)
+      su_h[i] = (uint8_t)(ssdn_qshift(hs[i], shs) ^ 0x80);
+    mt[3] = shs;
+    // v[s][c] = asr(x * dt_s * gx_s, 15), one pow2 scale per (head, chunk): pass 1 max, pass 2 quantise (P*Q values do
+    // not fit the per-core scratch). |x * dt * gx| < 2^7 * 2^15 * 2^15: the product needs 64 bits, v fits 32.
+    uint32_t vmx = 0;
+    for (uint32_t s_ = 0; s_ < Q; s_++) {
+      const int8_t *xrow = x + (b * L + t0 + s_) * d_inner + hh * P;
+      const int64_t m = (int64_t)dth[s_ * NHt] * gx[s_];
+      for (uint32_t c = 0; c < P; c++)
+        vmx = ssdn_absmax(vmx, (int32_t)(((int64_t)xrow[c] * m) >> 15));
+    }
+    const int shx = ssdn_pow2_exp(vmx);
+    mt[5] = shx;
+    uint8_t *xt_h = xt + hh * PXA * Q;
+    for (uint32_t s_ = 0; s_ < Q; s_++) {
+      const int8_t *xrow = x + (b * L + t0 + s_) * d_inner + hh * P;
+      const int64_t m = (int64_t)dth[s_ * NHt] * gx[s_];
+      uint8_t *dst = xt_h + s_;
+      for (uint32_t c = 0; c < P; c++)
+        dst[c * Q] = (uint8_t)(ssdn_qshift((int32_t)(((int64_t)xrow[c] * m) >> 15), shx) ^ 0x80);
+    }
+    return;
+  }
 
   if (part == 3) {
     // state -> S8 (+128): the max |state| was collected by the previous update
@@ -242,7 +304,15 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
     return;
   }
 
-  {
+  if (ts) {   // shared log-decay Lam[t] = cumsum asr(dta*A, 8)
+    const int64_t A0 = (int64_t)A[0];
+    const int16_t *dta = cx->dta + (b * L + t0);
+    int32_t running = 0;
+    for (uint32_t t = 0; t < Q; t++) {
+      running += (int32_t)(((int64_t)dta[t] * A0) >> 8);
+      lam[t] = running;
+    }
+  } else {
     const int64_t A_h = (int64_t)A[hh];
     int32_t running = 0;
     for (uint32_t t = 0; t < Q; t++) {
@@ -256,7 +326,7 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
     for (uint32_t t = 0; t < Q; t++) {
       for (uint32_t s = 0; s <= t; s++) {
         const int32_t e = (s == t) ? SSDN_ONE_Q15 : ssdn_expq(exp_lut, lam[t] - lam[s]);
-        const int32_t Gh = (int32_t)(((int64_t)G[t * Q + s] * (int64_t)dth[s * NHt]) >> 8);
+        const int32_t Gh = ts ? G[t * Q + s] : (int32_t)(((int64_t)G[t * Q + s] * (int64_t)dth[s * NHt]) >> 8);
         const int32_t m = (int32_t)(((int64_t)Gh * e) >> 15);
         cscr[t * Q + s] = m;
         mx = ssdn_absmax(mx, m);
@@ -272,7 +342,7 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
       const int32_t eQ = (s + 1 < Q) ? ssdn_expq(exp_lut, lam[Q - 1] - lam[s]) : SSDN_ONE_Q15;
       const int64_t dts = (int64_t)dth[s * NHt];
       for (uint32_t n = 0; n < N; n++) {
-        const int32_t dB = (int32_t)((dts * (int64_t)Bk[s * N + n]) >> 8);
+        const int32_t dB = ts ? Bk[s * N + n] : (int32_t)((dts * (int64_t)Bk[s * N + n]) >> 8);
         const int32_t m = (int32_t)(((int64_t)dB * eQ) >> 15);
         cscr[s * N + n] = m;
         mx = ssdn_absmax(mx, m);
@@ -294,44 +364,60 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
     }
     mt[2] = ssdn_quantise(cscr, Q, N, mx, W3, comp3, 0);
     ssdn_repack(W3, we + Q * Q + N * Q, Q, N);
-    mt[4] = eQ0;
+    if (!ts)
+      mt[4] = eQ0;  // two-scale: the per-head data item writes the state decay
+    (void)eQ0;
   }
 
 }
 
-// finish head hh-1: y epilogue + state update (own frame)
-// work split: worker wi of nw (core 0 sits out while it dispatches the next head's NE16 jobs); outputs and state
-// elements are split as contiguous ranges of the flattened (row, col) / (channel, state) index
-static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uint32_t hh, uint32_t wi, uint32_t nw) {
-  const int8_t *x = cx->x, *z = cx->z; int8_t *y = (int8_t *)cx->y; int32_t *y32 = (int32_t *)cx->y; const int32_t *D_skip = cx->D_skip;
-  int32_t *h_state = cx->h_state; int32_t *hmax = cx->hmax; const int32_t *gate_lut = cx->gate_lut;
-  const int16_t *gm16 = cx->gm16; const int32_t ep2_SG = cx->ep2_SG; const int32_t *acc = cx->acc, *meta = cx->meta;
-  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, NHt = cx->NHt, P = cx->P, N = cx->N, Q = cx->Q;
-  const uint32_t PXA = cx->PXA, ASZ = cx->ASZ, MSZ = cx->MSZ, d_inner = cx->d_inner;
-  const uint32_t epilogue_version = cx->epilogue_version; const int32_t output_requant_mul_q40 = cx->mul_q40;
-  const uint32_t hp = hh - 1;
-  const uint32_t sl = hp & 1;
-  const uint32_t QP = Q * P, ech = (QP + nw - 1) / nw;
-  const uint32_t e0 = wi * ech < QP ? wi * ech : QP, e1 = e0 + ech < QP ? e0 + ech : QP;
-  const uint32_t PN = P * N, sch = (PN + nw - 1) / nw;
-#if SSDN_PROFILE
-  const uint32_t pf0 = pi_perf_read(PI_PERF_CYCLES);
-#endif
-  const uint32_t s0 = wi * sch < PN ? wi * sch : PN, s1 = s0 + sch < PN ? s0 + sch : PN;
-  const int32_t *a1 = acc + sl * ASZ, *a2 = a1 + PXA * Q, *a3 = a2 + PXA * N;
-  const int32_t *mt = meta + hp * MSZ;
-  const int32_t *comp1 = mt + SSDN_META_HDR, *comp2 = comp1 + Q, *comp3 = comp2 + N;
-  const int sh1 = mt[0], sh2 = mt[1], e3 = mt[2] + mt[3] - 15;
+// two-scale epilogue (int32 output), own frame so that ssdn_finish_head stays small on the 1 KB slave stacks
+static __attribute__((noinline)) void ssdn_epilogue_ts(const ssdn_ctx_t *cx, uint32_t hp, const int32_t *mt,
+                                                       const int32_t *a1, const int32_t *a3, uint32_t e0, uint32_t e1) {
+  const int8_t *x = cx->x, *z = cx->z; int32_t *y32 = (int32_t *)cx->y; const int32_t *meta = cx->meta;
+  const int32_t *gate_lut = cx->gate_lut;
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, P = cx->P, N = cx->N, Q = cx->Q, d_inner = cx->d_inner;
+  const int64_t D_h = (int64_t)cx->D_skip[hp];
+  const int32_t *comp3 = mt + SSDN_META_HDR + Q + N;
+    // two-scale (int32 output): y1 = mul_pow2(asr(acc1*f1, 15), sh1+shx-8), y3 = mul_pow2(asr(acc3*f3, 15), sh3+shs-15)
+    const int32_t *m0 = meta;  // shared weights: shifts and +128 compensation live in head 0's metadata
+    const int32_t *c1v = m0 + SSDN_META_HDR, *c3v = c1v + Q + N;
+    const int32_t *f1 = comp3 + Q, *f3 = f1 + Q;
+    const int ex1 = m0[0] + mt[5] - 8, ex3 = m0[2] + mt[3] - 15;
+    const int osh = (int)cx->out_shift;
+    for (uint32_t t = e0 / P; t < Q && t * P < e1; t++) {
+      const uint32_t cb = t * P < e0 ? e0 - t * P : 0, ce = (t + 1) * P > e1 ? e1 - t * P : P;
+      const uint32_t row = (b * L + t0 + t) * d_inner + hp * P;
+      const int8_t *xr = x + row, *zr = z + row;
+      int32_t *yr = y32 + row;
+      const int32_t c1 = c1v[t], c3 = c3v[t];
+      const int64_t g1 = f1[t], g3 = f3[t];
+      const int32_t *p1 = a1 + t + cb * Q, *p3 = a3 + t + cb * Q;
+      for (uint32_t c = cb; c < ce; c++, p1 += Q, p3 += Q) {
+        const int64_t u1 = ((int64_t)(*p1 - c1) * g1) >> 15;
+        const int64_t u3 = ((int64_t)(*p3 - c3) * g3) >> 15;
+        const int64_t y_acc = (ex1 >= 0 ? (u1 << ex1) : (u1 >> (-ex1))) + (ex3 >= 0 ? (u3 << ex3) : (u3 >> (-ex3))) +
+                              D_h * (int64_t)xr[c];
+        const int64_t y_g = ssdn_round_shift(y_acc * (int64_t)gate_lut[(int32_t)zr[c] + 128], 13);
+        yr[c] = ssdn_sat_i32(osh > 0 ? ssdn_round_shift(y_g, osh) : y_g);
+      }
+    }
+}
+
+// y epilogue variants (int8 v2 / int32 / int8 v1), rows t of head hp in [e0, e1) of the flattened (t, c) range
+static __attribute__((noinline)) void ssdn_epi_v2(const ssdn_ctx_t *cx, uint32_t hp, uint32_t e0, uint32_t e1) {
+  const int8_t *x = cx->x, *z = cx->z; int8_t *y = (int8_t *)cx->y; int32_t *y32 = (int32_t *)cx->y;
+  const int32_t *gate_lut = cx->gate_lut; const int16_t *gm16 = cx->gm16; const int32_t ep2_SG = cx->ep2_SG;
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, P = cx->P, N = cx->N, Q = cx->Q, d_inner = cx->d_inner;
+  const int32_t *mt = cx->meta + hp * cx->MSZ;
+  const int32_t *a1 = cx->acc + (hp & 1) * cx->ASZ, *a3 = a1 + cx->PXA * (Q + N);
+  const int32_t *comp1 = mt + SSDN_META_HDR, *comp3 = comp1 + Q + N;
+  const int sh1 = mt[0], e3 = mt[2] + mt[3] - 15;
   const int l1 = sh1 > 0 ? sh1 : 0, r1 = sh1 < 0 ? -sh1 : 0;
   const int l3 = e3 > 0 ? e3 : 0, r3 = e3 < 0 ? -e3 : 0;
-  const int l2 = sh2 > 0 ? sh2 : 0, r2 = sh2 < 0 ? -sh2 : 0;
-  const int64_t eQ0 = (int64_t)mt[4];
-  const int64_t D_h = (int64_t)D_skip[hp];
-  const int64_t mul = (int64_t)output_requant_mul_q40;
-  // y epilogue (identical to GAP9_SSDScan_i8_i8), rows t over the cores. y = sat8(rs(y_g*mul, 40)) is
-  // exactly 0 for |y_g| <= zth, which skips the second 64-bit multiply (SSD outputs are mostly zero).
-  const int64_t zth = (((int64_t)1 << 39) - 1) / mul;
-  if (epilogue_version == 2) {
+  const int64_t D_h = (int64_t)cx->D_skip[hp];
+  const int64_t mul = (int64_t)cx->mul_q40;
+  (void)y; (void)y32; (void)gm16; (void)ep2_SG; (void)l1; (void)r1; (void)l3; (void)r3; (void)mul; (void)gate_lut;
     // v2: y = sat8(rs(rs(y_acc, ysh) * gm16[z], 53 - SG - ysh)), ysh from a static bound on |y_acc|
     const int64_t b1 = sh1 >= 0 ? ((int64_t)1 << 18) << sh1 : ((int64_t)1 << 18) >> (-sh1);
     const int64_t bN = ((int64_t)1 << 18) * (N > 16 ? N : 16) / 16;
@@ -373,7 +459,21 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
         yr[c] = (int8_t)(yv > 127 ? 127 : (yv < -128 ? -128 : yv));
       }
     }
-  } else if (cx->out_bits == 32) {
+}
+
+static __attribute__((noinline)) void ssdn_epi_out32(const ssdn_ctx_t *cx, uint32_t hp, uint32_t e0, uint32_t e1) {
+  const int8_t *x = cx->x, *z = cx->z; int8_t *y = (int8_t *)cx->y; int32_t *y32 = (int32_t *)cx->y;
+  const int32_t *gate_lut = cx->gate_lut; const int16_t *gm16 = cx->gm16; const int32_t ep2_SG = cx->ep2_SG;
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, P = cx->P, N = cx->N, Q = cx->Q, d_inner = cx->d_inner;
+  const int32_t *mt = cx->meta + hp * cx->MSZ;
+  const int32_t *a1 = cx->acc + (hp & 1) * cx->ASZ, *a3 = a1 + cx->PXA * (Q + N);
+  const int32_t *comp1 = mt + SSDN_META_HDR, *comp3 = comp1 + Q + N;
+  const int sh1 = mt[0], e3 = mt[2] + mt[3] - 15;
+  const int l1 = sh1 > 0 ? sh1 : 0, r1 = sh1 < 0 ? -sh1 : 0;
+  const int l3 = e3 > 0 ? e3 : 0, r3 = e3 < 0 ? -e3 : 0;
+  const int64_t D_h = (int64_t)cx->D_skip[hp];
+  const int64_t mul = (int64_t)cx->mul_q40;
+  (void)y; (void)y32; (void)gm16; (void)ep2_SG; (void)l1; (void)r1; (void)l3; (void)r3; (void)mul; (void)gate_lut;
     // wide output for a following RMSNormI32: y32 = sat32(rs(y_g, out_shift)), no Q40 requant
     // (a variant with the shifts built from 32-bit pieces was not faster: 7.24 M vs 7.19 M on b0f.ssd)
     const int osh = (int)cx->out_shift;
@@ -392,7 +492,24 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
         yr[c] = ssdn_sat_i32(osh > 0 ? ssdn_round_shift(y_g, osh) : y_g);
       }
     }
-  } else
+}
+
+static __attribute__((noinline)) void ssdn_epi_v1(const ssdn_ctx_t *cx, uint32_t hp, uint32_t e0, uint32_t e1) {
+  const int8_t *x = cx->x, *z = cx->z; int8_t *y = (int8_t *)cx->y; int32_t *y32 = (int32_t *)cx->y;
+  const int32_t *gate_lut = cx->gate_lut; const int16_t *gm16 = cx->gm16; const int32_t ep2_SG = cx->ep2_SG;
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, P = cx->P, N = cx->N, Q = cx->Q, d_inner = cx->d_inner;
+  const int32_t *mt = cx->meta + hp * cx->MSZ;
+  const int32_t *a1 = cx->acc + (hp & 1) * cx->ASZ, *a3 = a1 + cx->PXA * (Q + N);
+  const int32_t *comp1 = mt + SSDN_META_HDR, *comp3 = comp1 + Q + N;
+  const int sh1 = mt[0], e3 = mt[2] + mt[3] - 15;
+  const int l1 = sh1 > 0 ? sh1 : 0, r1 = sh1 < 0 ? -sh1 : 0;
+  const int l3 = e3 > 0 ? e3 : 0, r3 = e3 < 0 ? -e3 : 0;
+  const int64_t D_h = (int64_t)cx->D_skip[hp];
+  const int64_t mul = (int64_t)cx->mul_q40;
+  (void)y; (void)y32; (void)gm16; (void)ep2_SG; (void)l1; (void)r1; (void)l3; (void)r3; (void)mul; (void)gate_lut;
+  // y epilogue (identical to GAP9_SSDScan_i8_i8), rows t over the cores. y = sat8(rs(y_g*mul, 40)) is
+  // exactly 0 for |y_g| <= zth, which skips the second 64-bit multiply (SSD outputs are mostly zero).
+  const int64_t zth = (((int64_t)1 << 39) - 1) / mul;
   for (uint32_t t = e0 / P; t < Q && t * P < e1; t++) {
       const uint32_t cb = t * P < e0 ? e0 - t * P : 0, ce = (t + 1) * P > e1 ? e1 - t * P : P;
     const uint32_t row = (b * L + t0 + t) * d_inner + hp * P;
@@ -410,6 +527,40 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
       yr[c] = (ag <= zth) ? (int8_t)0 : ssdn_sat_i8(ssdn_round_shift(y_g * mul, SSDN_OUT_SHIFT));
     }
   }
+}
+
+// finish head hh-1: y epilogue + state update (own frame)
+// work split: worker wi of nw (core 0 sits out while it dispatches the next head's NE16 jobs); outputs and state
+// elements are split as contiguous ranges of the flattened (row, col) / (channel, state) index
+static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uint32_t hh, uint32_t wi, uint32_t nw) {
+  int32_t *h_state = cx->h_state; int32_t *hmax = cx->hmax; const int32_t *meta = cx->meta;
+  const uint32_t b = cx->b, NHt = cx->NHt, P = cx->P, N = cx->N, Q = cx->Q;
+  const uint32_t epilogue_version = cx->epilogue_version;
+  const uint32_t hp = hh - 1;
+  const uint32_t QP = Q * P, ech = (QP + nw - 1) / nw;
+  const uint32_t e0 = wi * ech < QP ? wi * ech : QP, e1 = e0 + ech < QP ? e0 + ech : QP;
+  const uint32_t PN = P * N, sch = (PN + nw - 1) / nw;
+#if SSDN_PROFILE
+  const uint32_t pf0 = pi_perf_read(PI_PERF_CYCLES);
+#endif
+  const uint32_t s0 = wi * sch < PN ? wi * sch : PN, s1 = s0 + sch < PN ? s0 + sch : PN;
+  const int32_t *a1 = cx->acc + (hp & 1) * cx->ASZ, *a2 = a1 + cx->PXA * Q, *a3 = a2 + cx->PXA * N;
+  const int32_t *mt = meta + hp * cx->MSZ;
+  const int ts = cx->decay_mode == 1;
+  // two-scale: W2's shift and +128 compensation are shared (head 0); acc2 is in units of the head's data scale
+  const int sh2 = ts ? meta[1] + mt[5] - 8 : mt[1];
+  const int32_t *comp2s = ts ? meta + SSDN_META_HDR + Q : mt + SSDN_META_HDR + Q;
+  const int l2 = sh2 > 0 ? sh2 : 0, r2 = sh2 < 0 ? -sh2 : 0;
+  const int64_t eQ0 = (int64_t)mt[4];
+  // y epilogue: one variant per call, each in its own frame (the 1 KB slave stacks)
+  if (epilogue_version == 2)
+    ssdn_epi_v2(cx, hp, e0, e1);
+  else if (cx->decay_mode == 1)
+    ssdn_epilogue_ts(cx, hp, mt, a1, a3, e0, e1);
+  else if (cx->out_bits == 32)
+    ssdn_epi_out32(cx, hp, e0, e1);
+  else
+    ssdn_epi_v1(cx, hp, e0, e1);
 #if SSDN_PROFILE
   const uint32_t pf1 = pi_perf_read(PI_PERF_CYCLES);
   if (pi_core_id() == 1) ssdn_p_epi += pf1 - pf0;
@@ -423,7 +574,7 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
     const uint32_t nb = c * N < s0 ? s0 - c * N : 0, ne = (c + 1) * N > s1 ? s1 - c * N : N;
     for (uint32_t n = nb; n < ne; n++) {
       const int64_t dec = (eQ0 * (int64_t)hr[n]) >> 15;
-      const int64_t sl_ = (((int64_t)(ar[n] - comp2[n])) << l2) >> r2;
+      const int64_t sl_ = (((int64_t)(ar[n] - comp2s[n])) << l2) >> r2;
       const int32_t hv = ssdn_sat_i32(dec + sl_);
       hr[n] = hv;
       mxs = ssdn_absmax(mxs, hv);
@@ -446,13 +597,15 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
                             const int32_t *__restrict__ gate_lut, uint8_t *__restrict__ scratch, uint32_t B_size,
                             uint32_t Q, uint32_t N, uint32_t P, uint32_t NHt, uint32_t L, uint32_t GH, uint32_t GW,
                             int32_t output_requant_mul_q40, uint32_t init_state, uint32_t epilogue_version,
-                            uint32_t out_bits, uint32_t out_shift) {
+                            uint32_t out_bits, uint32_t out_shift, const int16_t *__restrict__ dta,
+                            const int8_t *__restrict__ R, uint32_t decay_mode, int32_t resid_mul) {
   const int core = (int)pi_core_id();
   const uint32_t PXA = GH * GW;
   const uint32_t d_inner = NHt * P;
   const uint32_t WSZ = Q * Q + N * Q + Q * N;     // int8 per head: W1 | W2 | W3
   const uint32_t ASZ = PXA * (2 * Q + N);         // int32 per slot: acc1 | acc2 | acc3
-  const uint32_t MSZ = SSDN_META_HDR + 2 * Q + N; // int32 per head: sh1 sh2 sh3 shs eQ0 - - - comp1[Q] comp2[N] comp3[Q]
+  // int32 per head: sh1 sh2 sh3 shs eQ0 shx - - comp1[Q] comp2[N] comp3[Q] (+ two-scale: f1[Q] f3[Q])
+  const uint32_t MSZ = SSDN_META_HDR + 2 * Q + N + (decay_mode == 1 ? 2 * Q : 0);
   const uint32_t QM = Q * (Q > N ? Q : N);        // int32 per-core scratch
   const int16_t *exp_lut = SSDScan_exp_lut_ptr;
 
@@ -496,11 +649,46 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   }
   pi_cl_team_barrier();
 
-  ssdn_ctx_t cx = {.x = x, .z = z, .y = y, .dt = dt, .A = A, .D_skip = D_skip, .gate_lut = gate_lut, .G = G,
-                   .h_state = h_state, .hmax = hmax, .acc = acc, .meta = meta, .xt = xt, .su = su, .wenc = wenc,
-                   .w8 = w8, .exp_lut = exp_lut, .gm16 = gm16, .ep2_SG = ep2_SG, .mul_q40 = output_requant_mul_q40,
-                   .L = L, .NHt = NHt, .P = P, .N = N, .Q = Q, .PXA = PXA, .WSZ = WSZ, .ASZ = ASZ, .MSZ = MSZ,
-                   .d_inner = d_inner, .epilogue_version = epilogue_version, .out_bits = out_bits, .out_shift = out_shift};
+  ssdn_ctx_t *const cxp = &ssdn_cx;  // shared, in L1 (not on the 1 KB slave stacks)
+  if (core == 0) {
+    cxp->x = x;
+    cxp->z = z;
+    cxp->y = y;
+    cxp->dt = dt;
+    cxp->A = A;
+    cxp->D_skip = D_skip;
+    cxp->gate_lut = gate_lut;
+    cxp->G = G;
+    cxp->h_state = h_state;
+    cxp->hmax = hmax;
+    cxp->acc = acc;
+    cxp->meta = meta;
+    cxp->xt = xt;
+    cxp->su = su;
+    cxp->wenc = wenc;
+    cxp->w8 = w8;
+    cxp->exp_lut = exp_lut;
+    cxp->gm16 = gm16;
+    cxp->ep2_SG = ep2_SG;
+    cxp->mul_q40 = output_requant_mul_q40;
+    cxp->L = L;
+    cxp->NHt = NHt;
+    cxp->P = P;
+    cxp->N = N;
+    cxp->Q = Q;
+    cxp->PXA = PXA;
+    cxp->WSZ = WSZ;
+    cxp->ASZ = ASZ;
+    cxp->MSZ = MSZ;
+    cxp->d_inner = d_inner;
+    cxp->epilogue_version = epilogue_version;
+    cxp->out_bits = out_bits;
+    cxp->out_shift = out_shift;
+    cxp->dta = dta;
+    cxp->R = R;
+    cxp->decay_mode = decay_mode;
+    cxp->resid_mul = resid_mul;
+  }
 
   const int number_of_chunks = (int)(L / Q);
 #if SSDN_PROFILE
@@ -524,7 +712,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
       const uint32_t t0 = (uint32_t)chunk * Q;
       const int32_t *Bk = B + (b * L + t0) * N; // [Q][N]
       const int32_t *Ck = C + (b * L + t0) * N;
-      cx.b = b; cx.t0 = t0; cx.Bk = Bk; cx.Ck = Ck;
+      if (core == 0) { cxp->b = b; cxp->t0 = t0; cxp->Bk = Bk; cxp->Ck = Ck; }  // read after the barrier below
       SSDN_T(prof_g0);
 
       // ---- shared G[t][s] = (C_t . B_s) >> 15, rows over cores ----
@@ -542,9 +730,17 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
       // ---- phase A: 4 items per head over the cores ----
       // part-major, heaviest part first (3: state quant + x transpose, 1: W2, 2: W3, 0: W1), round-robin over the
       // cores: head-major order gave every core the same part, so cores 3 and 7 did all the heavy items
-      for (uint32_t k = (uint32_t)core; k < 4 * NHt; k += NUM_CORES) {
-        static const uint8_t ssdn_part_order[4] = {3, 1, 2, 0};
-        ssdn_phaseA_item(&cx, (k % NHt) * 4 + ssdn_part_order[k / NHt], cscr);
+      if (decay_mode == 1) {
+        // two-scale: the three weights once per chunk (head 0's slots, shared), plus one data item per head
+        for (uint32_t k = (uint32_t)core; k < 3 + NHt; k += NUM_CORES) {
+          static const uint8_t ssdn_ts_order[3] = {1, 2, 0};
+          ssdn_phaseA_item(cxp, k < 3 ? ssdn_ts_order[k] : (k - 3) * 4 + 3, cscr);
+        }
+      } else {
+        for (uint32_t k = (uint32_t)core; k < 4 * NHt; k += NUM_CORES) {
+          static const uint8_t ssdn_part_order[4] = {3, 1, 2, 0};
+          ssdn_phaseA_item(cxp, (k % NHt) * 4 + ssdn_part_order[k / NHt], cscr);
+        }
       }
       pi_cl_team_barrier();
       SSDN_T(prof_b0);
@@ -554,7 +750,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
         SSDN_T(pb_t0);
         if (core == 0 && hh < NHt) {
           const uint32_t sl = hh & 1;
-          const uint8_t *we = wenc + hh * WSZ;
+          const uint8_t *we = wenc + (decay_mode == 1 ? 0 : hh * WSZ);
           int32_t *a = acc + sl * ASZ;
           ssdn_dispatch(dev, &ssdn_tasks[sl][0], xt + hh * PXA * Q, we, a);
           ssdn_dispatch(dev, &ssdn_tasks[sl][1], xt + hh * PXA * Q, we + Q * Q, a + PXA * Q);
@@ -567,9 +763,9 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
         if (hh > 0) {
           if (hh < NHt) {  // core 0 dispatched head hh: cores 1..7 finish head hh-1
             if (core > 0)
-              ssdn_finish_head(&cx, hh, (uint32_t)core - 1, NUM_CORES - 1);
+              ssdn_finish_head(cxp, hh, (uint32_t)core - 1, NUM_CORES - 1);
           } else {
-            ssdn_finish_head(&cx, hh, (uint32_t)core, NUM_CORES);
+            ssdn_finish_head(cxp, hh, (uint32_t)core, NUM_CORES);
           }
         }
         SSDN_T(pb_t3);

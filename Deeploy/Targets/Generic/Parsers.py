@@ -724,6 +724,8 @@ class SILUParser(NodeParser):
                 if fn == 'gelu':  # same 256-entry LUT machinery, exact-erf GELU (FEMBA classifier head)
                     import math
                     y_fp32 = 0.5 * x_fp32 * (1.0 + np.vectorize(math.erf)(x_fp32 / math.sqrt(2.0)))
+                elif fn == 'sigmoid':  # FEMBA two-scale decay: residual gates R = round(127 sigmoid)
+                    y_fp32 = 1.0 / (1.0 + np.exp(-np.clip(x_fp32, -88.0, 88.0)))
                 else:
                     sigmoid_x = 1.0 / (1.0 + np.exp(-np.clip(x_fp32, -88.0, 88.0)))
                     y_fp32 = x_fp32 * sigmoid_x

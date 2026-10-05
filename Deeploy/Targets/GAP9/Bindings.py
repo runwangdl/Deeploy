@@ -576,6 +576,20 @@ GAP9SSDScanNE16Bindings = [
             PointerClass(int32_t),
             PointerClass(int32_t)
         ], [PointerClass(out_t)]), SSDScanNE16Template.referenceTemplate, GAP9Transformer) for out_t in (int8_t, int32_t)
+] + [
+    # two-scale decay: + dta int16 [B,L,1], R int8 [B,L,H] (round(127 sigmoid), a SiLU-LUT output)
+    NodeBinding(
+        PULPSSDScanChecker([
+            PointerClass(int8_t),
+            PointerClass(int8_t),
+            PointerClass(int16_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int16_t),
+            PointerClass(r_t)
+        ], [PointerClass(int32_t)]), SSDScanNE16Template.referenceTemplate, GAP9Transformer) for r_t in (int8_t, uint8_t)
 ]
 
 GAP9Mamba3ScanBindings = [

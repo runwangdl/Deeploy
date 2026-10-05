@@ -203,6 +203,14 @@ class PULPSelectiveScanI16Checker(_WideOutMixin, PULPSelectiveScanChecker):
 
 class PULPSSDScanChecker(_WideOutMixin, SignPropTypeChecker):
 
+    def typeCheck(self, ctxt, node, operatorRepresentation):
+        # SSD_Scan_NE16 has a 7-input and a 9-input (two-scale) form: a binding only matches its own arity
+        # (the input check zips inputs with input_types and would otherwise ignore the extra inputs)
+        if len(node.inputs) != len(self.input_types):
+            return ctxt, False
+        return super().typeCheck(ctxt, node, operatorRepresentation)
+
+
     def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):
         super().__init__(input_types, output_types)
 
