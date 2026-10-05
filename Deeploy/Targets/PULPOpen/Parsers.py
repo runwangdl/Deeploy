@@ -4,7 +4,7 @@
 
 import math
 import numpy as np
-from typing import Tuple
+from typing import List, Tuple
 
 import onnx_graphsurgeon as gs
 
@@ -608,6 +608,9 @@ class PULPSSDScanParser(NodeParser):
     def _expectedInputs(self, node: gs.Node) -> int:
         return 7
 
+    def _inputNames(self, node: gs.Node) -> List[str]:
+        return ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip']
+
     def parseNode(self, node: gs.Node) -> bool:
         ret = all([
             node.op == self.OP_NAME,
@@ -653,7 +656,7 @@ class PULPSSDScanParser(NodeParser):
 
         if ret:
             # ONNX input order matches [x, z, dt, B, C, A, D_skip]
-            inputs = ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip', 'dta', 'R']  # dta, R: SSD_Scan_NE16 decay_mode 1
+            inputs = self._inputNames(node)
             outputs = ['y']
 
             for idx, inputNode in enumerate(node.inputs):
@@ -695,24 +698,31 @@ class PULPSSDScanNE16Parser(PULPSSDScanParser):
     OP_NAME = 'SSD_Scan_NE16'
 
     def _expectedInputs(self, node: gs.Node) -> int:
+        if int(node.attrs.get('mamba3', 0)) == 1:
+            return 10
         return 9 if int(node.attrs.get('decay_mode', 0)) == 1 else 7
+
+    def _inputNames(self, node: gs.Node) -> List[str]:
+        base = ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip']
+        if int(node.attrs.get('mamba3', 0)) == 1:
+            return base + ['m3_gamma', 'm3_w', 'm3_theta']   # Mamba-3 rank 1
+        return base + ['dta', 'R']                          # two-scale decay (decay_mode 1)
 
     def parseNode(self, node: gs.Node) -> bool:
         ret = super().parseNode(node)
         if ret:
             self.operatorRepresentation['decay_mode'] = int(node.attrs.get('decay_mode', 0))
             self.operatorRepresentation['resid_mul'] = int(node.attrs.get('resid_mul', 0))
+            self.operatorRepresentation['mamba3'] = int(node.attrs.get('mamba3', 0))
+            for k in ('dta', 'R', 'm3_gamma', 'm3_w', 'm3_theta'):
+                self.operatorRepresentation[k] = 'NULL'
         return ret
 
     def parseNodeCtxt(self,
                       ctxt: NetworkContext,
                       node: gs.Node,
                       channels_first: bool = True) -> Tuple[NetworkContext, bool]:
-        newCtxt, ret = super().parseNodeCtxt(ctxt, node, channels_first)
-        if ret and self.operatorRepresentation.get('decay_mode', 0) != 1:
-            self.operatorRepresentation['dta'] = 'NULL'
-            self.operatorRepresentation['R'] = 'NULL'
-        return newCtxt, ret
+        return super().parseNodeCtxt(ctxt, node, channels_first)
 
 
 class PULPMamba3ScanParser(PULPSSDScanParser):

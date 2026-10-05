@@ -27,14 +27,15 @@ def pixelGrid(P: int) -> Tuple[int, int]:
     return best[1], best[2]
 
 
-def scratchBytes(Q, N, P, NHt, GH, GW, decay_mode = 0):
+def scratchBytes(Q, N, P, NHt, GH, GW, decay_mode = 0, mamba3 = 0):
     """Mirrors the carve-up in GAP9_SSDScanNE16_i8_i8 (NHt may be a solver variable)."""
     PXA = GH * GW
     WSZ = Q * (Q + 2 * N)
     ASZ = PXA * (2 * Q + N)
     MSZ = META_HDR + 2 * Q + N + (3 * Q if decay_mode == 1 else 0)
     QM = Q * max(Q, N)
-    return NHt * (PXA * (Q + N) + 2 * WSZ + 4 * MSZ) + 4 * NE16_SLOTS * ASZ + 4 * Q * Q + 4 * NUM_CORES * (QM + Q) + 512
+    rot = NHt * 2 * Q * N * 4 if mamba3 else 0   # Mamba-3 RoPE: rotated B, C rows per head
+    return NHt * (PXA * (Q + N) + 2 * WSZ + 4 * MSZ) + 4 * NE16_SLOTS * ASZ + 4 * Q * Q + 4 * NUM_CORES * (QM + Q) + 512 + rot
 
 
 class GAP9SSDScanNE16Template(NodeTemplate):
@@ -54,9 +55,10 @@ class GAP9SSDScanNE16Template(NodeTemplate):
         GH, GW = pixelGrid(P)
         name = operatorRepresentation['nodeName']
         # state [B][NHt][P][N] int32 followed by the per-core |state| maxima [B][NHt][NUM_CORES]
-        return [(name + "_h_state", batchSize * NHt * (P * N + NUM_CORES) * 4), (name + "_gate_lut_l1", 256 * 4),
+        m3 = int(operatorRepresentation.get('mamba3', 0))
+        return [(name + "_h_state", batchSize * NHt * (P * N + NUM_CORES + (1 if m3 else 0)) * 4), (name + "_gate_lut_l1", 256 * 4),
                 (name + "_ne16_scratch",
-                 scratchBytes(Q, N, P, NHt, GH, GW, int(operatorRepresentation.get('decay_mode', 0))))]
+                 scratchBytes(Q, N, P, NHt, GH, GW, int(operatorRepresentation.get('decay_mode', 0)), m3))]
 
     def hoistTransientBuffers(self, ctxt: NetworkContext,
                               operatorRepresentation: OperatorRepresentation) -> Tuple[NetworkContext, Dict, List[str]]:
@@ -109,6 +111,10 @@ GAP9_SSDScanNE16_i8_i8(
     (const int16_t *) ${dta},
     (const int8_t *) ${R},
     ${decay_mode},
-    ${resid_mul}
+    ${resid_mul},
+    (const int16_t *) ${m3_gamma},
+    (const int16_t *) ${m3_w},
+    (const int16_t *) ${m3_theta},
+    ${mamba3}
 );
 """)

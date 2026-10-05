@@ -201,9 +201,51 @@ typedef struct {
   int32_t *h_state, *hmax, *acc, *meta; uint8_t *xt, *su, *wenc; int8_t *w8; const int16_t *exp_lut, *gm16;
   int32_t ep2_SG, mul_q40; uint32_t b, L, t0, NHt, P, N, Q, PXA, WSZ, ASZ, MSZ, d_inner, epilogue_version, out_bits, out_shift;
   const int16_t *dta; const int8_t *R; uint32_t decay_mode; int32_t resid_mul;  // two-scale decay (decay_mode 1)
+  const int16_t *m3g, *m3w, *m3th; int32_t *rot, *thstate; uint32_t m3;          // Mamba-3 rank 1 (gamma, w, theta)
 } ssdn_ctx_t;
 // one shared context in L1 (same values on every core; core 0 writes it, the following barriers order the reads)
 static PI_L1 ssdn_ctx_t ssdn_cx;
+
+// Mamba-3 RoPE (mamba3_q._apply_rope): cos/sin over one turn in 256 steps, Q15, clamped to +-32767
+static int16_t ssdn_rot_cos[256], ssdn_rot_sin[256];
+static const int16_t ssdn_rot_q[65] = {  // = ssd_ne16_ref.ROT_SIN[0..64]
+    0, 804, 1608, 2411, 3212, 4011, 4808, 5602, 6393, 7180, 7962, 8740, 9512, 10279, 11039, 11793, 12540, 13279,
+    14010, 14733, 15447, 16151, 16846, 17531, 18205, 18868, 19520, 20160, 20788, 21403, 22006, 22595, 23170, 23732,
+    24279, 24812, 25330, 25833, 26320, 26791, 27246, 27684, 28106, 28511, 28899, 29269, 29622, 29957, 30274, 30572,
+    30853, 31114, 31357, 31581, 31786, 31972, 32138, 32286, 32413, 32522, 32610, 32679, 32729, 32758, 32767};
+static void ssdn_rot_init(void) {  // sin over [0, 2pi) from the quarter-wave table (exact copies of the reference values)
+  for (int i = 0; i < 256; i++) {
+    const int q = i >> 6, r = i & 63;
+    const int sv = (q == 0) ? ssdn_rot_q[r] : (q == 1) ? ssdn_rot_q[64 - r] : (q == 2) ? -ssdn_rot_q[r] : -ssdn_rot_q[64 - r];
+    const int j = (i + 64) & 255, qc = j >> 6, rc = j & 63;
+    const int cv = (qc == 0) ? ssdn_rot_q[rc] : (qc == 1) ? ssdn_rot_q[64 - rc] : (qc == 2) ? -ssdn_rot_q[rc] : -ssdn_rot_q[64 - rc];
+    ssdn_rot_sin[i] = (int16_t)sv;
+    ssdn_rot_cos[i] = (int16_t)cv;
+  }
+}
+
+// Mamba-3 step R, head hh: rotate this chunk's B and C rows by the accumulated angle (carried per head across chunks
+// and L tiles in thstate) into rot[hh][0|1][t][n]
+static __attribute__((noinline)) void ssdn_m3_rope(const ssdn_ctx_t *cx, uint32_t hh) {
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, NHt = cx->NHt, N = cx->N, Q = cx->Q;
+  int32_t *rb = cx->rot + hh * 2 * Q * N, *rc = rb + Q * N;
+  int32_t th = cx->thstate[b * NHt + hh];
+  for (uint32_t t = 0; t < Q; t++) {
+    th += (int32_t)cx->m3th[(b * L + t0 + t) * NHt + hh];
+    const uint32_t idx = ((uint32_t)th >> 8) & 255u;
+    const int64_t c = ssdn_rot_cos[idx], sn = ssdn_rot_sin[idx];
+    const int32_t *Bt = cx->Bk + t * N, *Ct = cx->Ck + t * N;
+    for (uint32_t n = 0; n + 1 < N; n += 2) {
+      const int64_t be = Bt[n], bo = Bt[n + 1], ce = Ct[n], co = Ct[n + 1];
+      rb[t * N + n] = (int32_t)((c * be + sn * bo) >> 15);
+      rb[t * N + n + 1] = (int32_t)((-sn * be + c * bo) >> 15);
+      rc[t * N + n] = (int32_t)((c * ce + sn * co) >> 15);
+      rc[t * N + n + 1] = (int32_t)((-sn * ce + c * co) >> 15);
+    }
+    if (N & 1) { rb[t * N + N - 1] = Bt[N - 1]; rc[t * N + N - 1] = Ct[N - 1]; }
+  }
+  cx->thstate[b * NHt + hh] = th;
+}
 
 // one phase-A work item (head hh, part 0..3): own frame, so it does not add to the caller's stack
 static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uint32_t it, int32_t *cscr) {
@@ -221,6 +263,10 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
   uint8_t *we = wenc + hh * WSZ;
   const int16_t *dth = dt + (b * L + t0) * NHt + hh; // stride NHt
   const uint32_t ts = cx->decay_mode == 1;
+  const uint32_t m3 = cx->m3, m3rot = cx->m3 && cx->m3th != 0;
+  const int16_t *m3g = m3 ? cx->m3g + (b * L + t0) * NHt + hh : 0, *m3w = m3 ? cx->m3w + (b * L + t0) * NHt + hh : 0;
+  const int32_t *rB = m3rot ? cx->rot + hh * 2 * Q * N : 0, *rC = m3rot ? rB + Q * N : 0;
+  const int32_t *Bs = m3rot ? rB : Bk, *Cs = m3rot ? rC : Ck;  // B, C rows used by W2 / W3
 
   if (ts && part == 3) {
     // two-scale step 1, head hh: rho = cumsum(-asr(R*rmul, 8)); gx[s] = e(rho_Q - rho_s); f1 = 2^30 / gx; f3 = e(rho_t);
@@ -299,7 +345,16 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
     for (uint32_t t = 0; t < Q; t++) {
       for (uint32_t s = 0; s <= t; s++) {
         const int32_t e = (s == t) ? SSDN_ONE_Q15 : ssdn_expq(exp_lut, lam[t] - lam[s]);
-        const int32_t Gh = (int32_t)(((int64_t)G[t * Q + s] * (ts ? (int64_t)256 : (int64_t)dth[s * NHt])) >> 8);
+        int64_t Gv = G[t * Q + s];
+        if (m3rot) {   // Mamba-3 RoPE: per-head G from the rotated rows
+          int64_t d = 0;
+          for (uint32_t n = 0; n < N; n++)
+            d += (int64_t)rC[t * N + n] * (int64_t)rB[s * N + n];
+          Gv = (int32_t)(d >> 15);
+        }
+        // weight per key: dt (Mamba-2) | 256 (two-scale, exact) | Mamba-3: w off the diagonal, gamma on it
+        const int64_t kw = m3 ? (int64_t)(s == t ? m3g[s * NHt] : m3w[s * NHt]) : (ts ? (int64_t)256 : (int64_t)dth[s * NHt]);
+        const int32_t Gh = (int32_t)((Gv * kw) >> 8);
         const int32_t m = (int32_t)(((int64_t)Gh * e) >> 15);
         cscr[t * Q + s] = m;
         mx = ssdn_absmax(mx, m);
@@ -313,9 +368,10 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
     // dBd[s][n] = ((dt_s*B[s][n]) >> 8) * e_Qs[s] >> 15  ->  W2[n][s]
     for (uint32_t s = 0; s < Q; s++) {
       const int32_t eQ = (s + 1 < Q) ? ssdn_expq(exp_lut, lam[Q - 1] - lam[s]) : SSDN_ONE_Q15;
-      const int64_t dts = ts ? (int64_t)256 : (int64_t)dth[s * NHt];  // two-scale: no dt in the weights (x256 >> 8 exact)
+      // two-scale: no dt in the weights (x256 >> 8 exact); Mamba-3: the per-key weight w
+      const int64_t dts = m3 ? (int64_t)m3w[s * NHt] : (ts ? (int64_t)256 : (int64_t)dth[s * NHt]);
       for (uint32_t n = 0; n < N; n++) {
-        const int32_t dB = (int32_t)((dts * (int64_t)Bk[s * N + n]) >> 8);
+        const int32_t dB = (int32_t)((dts * (int64_t)Bs[s * N + n]) >> 8);
         const int32_t m = (int32_t)(((int64_t)dB * eQ) >> 15);
         cscr[s * N + n] = m;
         mx = ssdn_absmax(mx, m);
@@ -330,7 +386,7 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
       const int32_t e0 = ssdn_expq(exp_lut, lam[t]);
       eQ0 = e0;
       for (uint32_t n = 0; n < N; n++) {
-        const int32_t m = (int32_t)(((int64_t)Ck[t * N + n] * e0) >> 15);
+        const int32_t m = (int32_t)(((int64_t)Cs[t * N + n] * e0) >> 15);
         cscr[t * N + n] = m;
         mx = ssdn_absmax(mx, m);
       }
@@ -629,7 +685,9 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
                             uint32_t Q, uint32_t N, uint32_t P, uint32_t NHt, uint32_t L, uint32_t GH, uint32_t GW,
                             int32_t output_requant_mul_q40, uint32_t init_state, uint32_t epilogue_version,
                             uint32_t out_bits, uint32_t out_shift, const int16_t *__restrict__ dta,
-                            const int8_t *__restrict__ R, uint32_t decay_mode, int32_t resid_mul) {
+                            const int8_t *__restrict__ R, uint32_t decay_mode, int32_t resid_mul,
+                            const int16_t *__restrict__ m3_gamma, const int16_t *__restrict__ m3_w,
+                            const int16_t *__restrict__ m3_theta, uint32_t mamba3) {
   const int core = (int)pi_core_id();
   const uint32_t PXA = GH * GW;
   const uint32_t d_inner = NHt * P;
@@ -651,6 +709,8 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   int16_t *gm16 = (int16_t *)(G + Q * Q + NUM_CORES * (QM + Q)); // [256] epilogue v2 LUT (gate * mul folded)
   int32_t ep2_SG = 0;
   int32_t *hmax = h_state + B_size * NHt * P * N;           // [B][NHt][NUM_CORES] per-core |state| maxima
+  int32_t *thstate = hmax + B_size * NHt * NUM_CORES;       // Mamba-3: [B][NHt] accumulated RoPE angle
+  int32_t *rot = (int32_t *)(gm16 + 256);                   // Mamba-3 RoPE: [NHt][2][Q][N] rotated B, C rows
 
   const ne16_dev_t *dev = ne16_pulp_get_dev();
   if (core == 0) {
@@ -718,6 +778,14 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
     cxp->R = R;
     cxp->decay_mode = decay_mode;
     cxp->resid_mul = resid_mul;
+    cxp->m3 = mamba3;
+    cxp->m3g = m3_gamma;
+    cxp->m3w = m3_w;
+    cxp->m3th = (mamba3 && m3_theta) ? m3_theta : 0;
+    cxp->rot = rot;
+    cxp->thstate = thstate;
+    if (mamba3 && m3_theta)
+      ssdn_rot_init();
   }
 
   const int number_of_chunks = (int)(L / Q);
@@ -735,6 +803,9 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
         hb[i] = 0;
       for (uint32_t i = (uint32_t)core; i < NHt * NUM_CORES; i += NUM_CORES)
         hmax[b * NHt * NUM_CORES + i] = 0;
+      if (mamba3)
+        for (uint32_t i = (uint32_t)core; i < NHt; i += NUM_CORES)
+          thstate[b * NHt + i] = 0;
     }
     pi_cl_team_barrier();
 
@@ -772,6 +843,11 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
         pi_cl_team_barrier();
         ssdn_ts_step3(cxp, (uint32_t)core, G + Q * Q, QM + Q);
       } else {
+        if (mamba3 && m3_theta) {   // Mamba-3 RoPE: rotated B, C rows per head before the weight items
+          for (uint32_t hh = (uint32_t)core; hh < NHt; hh += NUM_CORES)
+            ssdn_m3_rope(cxp, hh);
+          pi_cl_team_barrier();
+        }
         for (uint32_t k = (uint32_t)core; k < 4 * NHt; k += NUM_CORES) {
           static const uint8_t ssdn_part_order[4] = {3, 1, 2, 0};
           ssdn_phaseA_item(cxp, (k % NHt) * 4 + ssdn_part_order[k / NHt], cscr);

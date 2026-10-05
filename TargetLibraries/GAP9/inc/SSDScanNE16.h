@@ -18,6 +18,8 @@
 // out_bits: 8 (default, int8 y) or 32 (int32 y = sat32(rs(y_g, out_shift)), epilogue 1, feeds RMSNormI32).
 // decay_mode 1 (two-scale decay, int32 output only): shared weights per chunk from Lam = cumsum asr(dta*A[0], 8),
 // per-head data scaling from rho = cumsum(-asr(R*resid_mul, 8)); dta/R may be NULL for decay_mode 0.
+// mamba3 1 (Mamba-3 rank 1): per-key weights m3_w (off-diagonal, state) / m3_gamma (diagonal) instead of dt, and
+// m3_theta (may be NULL) rotates B and C per head (RoPE, angle carried across tiles); see ssd_ne16_ref.
 // Only built on the GAP9_w_NE16 platform (DEEPLOY_USE_NE16).
 void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restrict__ z,
                             const int16_t *__restrict__ dt, const int32_t *__restrict__ B,
@@ -27,7 +29,9 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
                             uint32_t Q, uint32_t N, uint32_t P, uint32_t NHt, uint32_t L, uint32_t GH, uint32_t GW,
                             int32_t output_requant_mul_q40, uint32_t init_state, uint32_t epilogue_version,
                             uint32_t out_bits, uint32_t out_shift, const int16_t *__restrict__ dta,
-                            const int8_t *__restrict__ R, uint32_t decay_mode, int32_t resid_mul);
+                            const int8_t *__restrict__ R, uint32_t decay_mode, int32_t resid_mul,
+                            const int16_t *__restrict__ m3_gamma, const int16_t *__restrict__ m3_w,
+                            const int16_t *__restrict__ m3_theta, uint32_t mamba3);
 
 // StaticScan_NE16 (constant-parameter Mamba-2 block as per-head NE16 1x1 jobs over the whole window), see SSDScanNE16.c
 void GAP9_StaticScanNE16_i8(const int8_t *__restrict__ x, const int8_t *__restrict__ z, const uint8_t *__restrict__ wenc,

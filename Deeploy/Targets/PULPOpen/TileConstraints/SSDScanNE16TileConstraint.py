@@ -43,6 +43,16 @@ class SSDScanNE16TileConstraint(SSDScanTileConstraint):
             tilerModel.addConstraint(
                 tilerModel.getTensorDimVar(tensorName = RBuffer.name, dimIdx = 2) == tilerModel.getTensorDimVar(
                     tensorName = ABuffer.name, dimIdx = 0))
+        if int(parseDict.get('mamba3', 0)) == 1:
+            # gamma, w, theta [B,L,H] tile exactly like dt
+            dtBuffer = ctxt.lookup(name = parseDict["dt"])
+            for k in ('m3_gamma', 'm3_w', 'm3_theta'):
+                buf = ctxt.lookup(name = parseDict[k])
+                tilerModel.addTensorDimToModel(ctxt, buf.name)
+                for d in range(3):
+                    tilerModel.addConstraint(
+                        tilerModel.getTensorDimVar(tensorName = buf.name, dimIdx = d) == tilerModel.getTensorDimVar(
+                            tensorName = dtBuffer.name, dimIdx = d))
         return tilerModel
 
     @staticmethod
@@ -81,6 +91,13 @@ class SSDScanNE16TileConstraint(SSDScanTileConstraint):
         reordered = [absoluteOutputCubes[i] for i in order]
         varRep, schedule = super(SSDScanNE16TileConstraint, cls).serializeTilingSolution(
             tilingSolution, reordered, targetMemLevel, ctxt, operatorRepresentation)
+        if int(operatorRepresentation.get('mamba3', 0)) == 1:
+            inBase, _ = cls.extractBaseAddr(tilingSolution, targetMemLevel, operatorRepresentation,
+                                            ['m3_gamma', 'm3_w', 'm3_theta'])
+            schedule.inputBaseOffsets.update(inBase)
+            for sched in schedule.inputLoadSchedule:
+                for k in ('m3_gamma', 'm3_w', 'm3_theta'):
+                    sched[k] = sched["dt"]
         if cls._twoscale(operatorRepresentation):
             inBase, _ = cls.extractBaseAddr(tilingSolution, targetMemLevel, operatorRepresentation, ['dta', 'R'])
             schedule.inputBaseOffsets.update(inBase)
