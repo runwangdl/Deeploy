@@ -156,3 +156,15 @@ class PULPMamba3ScanLayer(PULPSSDScanLayer):
                      + Chunk * NR                          # phase 4 scaling
                      + P * N * Chunk * R)                  # state fold
         return B * H * numChunks * per_chunk
+
+
+class PULPStaticScanLayer(ONNXLayer):
+    """StaticScan_NE16: per-head causal LTI filter over the window (lower-triangular L x L weights per head)"""
+
+    def __init__(self, maps: List[NodeMapper]):
+        super().__init__(maps)
+
+    def computeOps(self):
+        rep = self.mapper.parser.operatorRepresentation
+        L, P, H = rep['seq_len'], rep['head_dim'], rep['n_heads']
+        return 2 * H * P * (L * (L + 1) // 2) + 6 * H * P * L

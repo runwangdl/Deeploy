@@ -37,6 +37,7 @@ from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPL3Tiling import PULPL
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPProfileUntiled import PULPProfileUntiled
 from Deeploy.Targets.PULPOpen.DataTypes import PULPDMAFuture
 from Deeploy.Targets.PULPOpen.Templates import RMSNormI32Template
+from Deeploy.Targets.GAP9.Templates import StaticScanNE16Template
 from Deeploy.Targets.GAP9.Templates import Mamba3ScanTemplate, SelectiveScanI16Template, SelectiveScanTemplate, SSDScanNE16Template, SSDScanTemplate
 from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, FloatAddTemplate, FloatConvTemplate, \
     IntAddTemplate, \
@@ -49,7 +50,7 @@ from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, F
     TransposeTemplate, UniformRequantShiftTemplate, iRMSNormTemplate, iSoftmaxTemplate, iLayernormTemplate, \
     QuantTemplate, DequantTemplate
 from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker, PULPLinearChecker, PULPMaxPoolChecker, \
-    PULPMamba3ScanChecker, PULPRMSNormI32Checker, PULPRequantShiftChecker, PULPSelectiveScanChecker, PULPSelectiveScanI16Checker, PULPSoftplusChecker, PULPSSDScanChecker
+    PULPMamba3ScanChecker, PULPRMSNormI32Checker, PULPStaticScanChecker, PULPRequantShiftChecker, PULPSelectiveScanChecker, PULPSelectiveScanI16Checker, PULPSoftplusChecker, PULPSSDScanChecker
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingVariableReplacement import TilingVariableReplacement, \
     TilingVariableReplacementUpdate
 
@@ -441,6 +442,13 @@ GAP9ConcatBindings = [
 GAP9iRMSNormBindings = [
     NodeBinding(LayerNormChecker([PointerClass(int8_t), PointerClass(int32_t)], [PointerClass(int8_t)]),
                 iRMSNormTemplate.referenceTemplate, GAP9Transformer)
+]
+
+GAP9StaticScanNE16Bindings = [
+    NodeBinding(
+        PULPStaticScanChecker([PointerClass(int8_t), PointerClass(int8_t), PointerClass(uint8_t), PointerClass(int32_t),
+                               PointerClass(int32_t), PointerClass(int32_t)], [PointerClass(int32_t)]),
+        StaticScanNE16Template.referenceTemplate, GAP9Transformer)
 ]
 
 GAP9RMSNormI32Bindings = [

@@ -828,4 +828,68 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
 #endif
 }
 
+// ----------------------------------------------------------------------------------------------------------------------
+// StaticScan_NE16: a Mamba-2 block whose decay, Delta, B, C are constants is a per-head causal LTI filter over the window.
+// One NE16 1x1 job per (head, pixel chunk): pixels = the head's channels (SSTAT_PXC per chunk, a 3 x 9 grid), Ki = s,
+// Ko = t (whole window, L a multiple of 16), constant int8 weights already in the NE16 layout (wenc, + comp = 128 sum W).
+// Epilogue on the cores (m2_export/static_scan.py):
+//   y_acc = (acc - comp[t]) * M[t] + Dq * x[t][c];  y = sat32(rs(rs(y_acc * gate_lut[z + 128], 13), out_shift))
+#define SSTAT_GH 3
+#define SSTAT_GW 9
+#define SSTAT_PXC (SSTAT_GH * SSTAT_GW)
+static ne16_task_t sstat_task;
+
+static __attribute__((noinline)) void sstat_epilogue(const int32_t *acc, const int8_t *x, const int8_t *z, int32_t *y,
+                                                     const int32_t *comp, const int32_t *M, int32_t Dq,
+                                                     const int32_t *gate_lut, uint32_t L, uint32_t d_inner,
+                                                     uint32_t col0, uint32_t npx, int osh, uint32_t core) {
+  const uint32_t tot = npx * L, ch = (tot + NUM_CORES - 1) / NUM_CORES;
+  const uint32_t i0 = core * ch < tot ? core * ch : tot, i1 = i0 + ch < tot ? i0 + ch : tot;
+  const int64_t D64 = (int64_t)Dq;
+  for (uint32_t i = i0; i < i1; i++) {
+    const uint32_t cl = i / L, t = i - cl * L;
+    const uint32_t idx = t * d_inner + col0 + cl;
+    const int64_t y_acc = (int64_t)(acc[i] - comp[t]) * (int64_t)M[t] + D64 * (int64_t)x[idx];
+    const int64_t y_g = ssdn_round_shift(y_acc * (int64_t)gate_lut[(int32_t)z[idx] + 128], 13);
+    y[idx] = ssdn_sat_i32(osh > 0 ? ssdn_round_shift(y_g, osh) : y_g);
+  }
+}
+
+void GAP9_StaticScanNE16_i8(const int8_t *__restrict__ x, const int8_t *__restrict__ z, const uint8_t *__restrict__ wenc,
+                            const int32_t *__restrict__ comp, const int32_t *__restrict__ M,
+                            const int32_t *__restrict__ Dq, int32_t *__restrict__ y,
+                            const int32_t *__restrict__ gate_lut, uint8_t *__restrict__ scratch, uint32_t L, uint32_t P,
+                            uint32_t NHt, int32_t out_shift) {
+  const uint32_t core = pi_core_id();
+  const uint32_t d_inner = NHt * P;
+  const uint32_t nchunk = (P + SSTAT_PXC - 1) / SSTAT_PXC;
+  uint8_t *xt = scratch;                                         // [nchunk * PXC][L] (+128), padded pixels unused
+  int32_t *acc = (int32_t *)(xt + nchunk * SSTAT_PXC * L);       // [PXC][L]
+  const ne16_dev_t *dev = ne16_pulp_get_dev();
+  if (core == 0)
+    ssdn_task_setup(&sstat_task, L, L, SSTAT_GH, SSTAT_GW);
+  for (uint32_t hh = 0; hh < NHt; hh++) {
+    // x columns of head hh -> xt[c][s] (+128), channels over the cores
+    for (uint32_t c = core; c < P; c += NUM_CORES) {
+      const int8_t *src = x + hh * P + c;
+      uint8_t *dst = xt + c * L;
+      for (uint32_t s_ = 0; s_ < L; s_++)
+        dst[s_] = (uint8_t)src[s_ * d_inner] ^ 0x80;
+    }
+    pi_cl_team_barrier();
+    const uint8_t *wh = wenc + hh * L * L;
+    for (uint32_t k = 0; k < nchunk; k++) {
+      if (core == 0) {
+        ssdn_dispatch(dev, &sstat_task, xt + k * SSTAT_PXC * L, wh, acc);
+        ne16_nnx_resolve_wait(dev, &sstat_task);
+      }
+      pi_cl_team_barrier();
+      const uint32_t npx = (k + 1) * SSTAT_PXC <= P ? SSTAT_PXC : P - k * SSTAT_PXC;
+      sstat_epilogue(acc, x, z, y, comp + hh * L, M + hh * L, Dq[hh], gate_lut, L, d_inner, hh * P + k * SSTAT_PXC, npx,
+                     (int)out_shift, core);
+      pi_cl_team_barrier();
+    }
+  }
+}
+
 #endif // DEEPLOY_USE_NE16

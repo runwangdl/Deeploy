@@ -843,3 +843,39 @@ class PULPRMSNormI32Parser(NodeParser):
         self.operatorRepresentation['inputSize'] = int(np.prod(shape))
         self.operatorRepresentation['lastDimLength'] = int(shape[-1])
         return ctxt, True
+
+
+class PULPStaticScanNE16Parser(NodeParser):
+    """StaticScan_NE16: constant-parameter Mamba-2 block (decay, Delta, B, C fixed) as per-head NE16 1x1 jobs over the
+    whole window. inputs: x int8 [B,L,D], z int8 [B,L,D], wenc uint8 [H, L*L] (NE16 weight layout), comp int32 [H,L],
+    M int32 [H,L], Dq int32 [H]; output int32 [B,L,D]. attrs: seq_len, head_dim, n_heads, gate_z_scale, out_shift.
+    Kernel GAP9_StaticScanNE16_i8 (TargetLibraries/GAP9/src/SSDScanNE16.c), definition m2_export/static_scan.py."""
+
+    def __init__(self):
+        super().__init__()
+
+    def parseNode(self, node: gs.Node) -> bool:
+        ret = node.op == 'StaticScan_NE16' and len(node.inputs) == 6 and len(node.outputs) == 1
+        if ret:
+            for k in ('seq_len', 'head_dim', 'n_heads', 'out_shift'):
+                self.operatorRepresentation[k] = int(node.attrs[k])
+            self.operatorRepresentation['gate_z_scale'] = float(node.attrs['gate_z_scale'])
+            self.operatorRepresentation['batch_size'] = 1
+        return ret
+
+    def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node, channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        for idx, name in enumerate(['x', 'z', 'wenc', 'comp', 'M', 'Dq']):
+            self.operatorRepresentation[name] = ctxt.lookup(node.inputs[idx].name).name
+        self.operatorRepresentation['y'] = ctxt.lookup(node.outputs[0].name).name
+        lut_name = node.name + '_gate_lut'
+        if lut_name not in ctxt.globalObjects:
+            z_d = (np.arange(256, dtype = np.float64) - 128.0) * self.operatorRepresentation['gate_z_scale']
+            z_clip = np.clip(z_d, -20.0, 20.0)
+            q20 = np.round(z_d * (1.0 / (1.0 + np.exp(-z_clip))) * float(1 << 20)).astype(np.int64)
+            q13 = np.where(q20 >= 0, (q20 + (1 << 6)) >> 7, -(((-q20) + (1 << 6)) >> 7)).astype(np.int32)
+            buf = ctxt.ConstantBuffer(lut_name, [256], q13)
+            ctxt.add(buf, ctxt = 'global')
+            ctxt.annotateType(lut_name, PointerClass(int32_t))
+            buf._memoryLevel = "L2"
+        self.operatorRepresentation['gate_lut'] = lut_name
+        return ctxt, True

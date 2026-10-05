@@ -239,3 +239,16 @@ class PULPRMSNormI32Checker(SignPropTypeChecker):
 
     def _inferSignedness(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> List[bool]:
         return [True]
+
+
+class PULPStaticScanChecker(SignPropTypeChecker):
+    """StaticScan_NE16: int32 output (consumed by RMSNormI32), 2^32 signed levels"""
+
+    def __init__(self, input_types: Sequence[Type[Pointer]], output_types: Sequence[Type[Pointer]]):
+        super().__init__(input_types, output_types)
+
+    def _inferNumLevels(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> List[int]:
+        return [2**32]
+
+    def _inferSignedness(self, inputs: List[VariableBuffer], operatorRepresentation: OperatorRepresentation) -> List[bool]:
+        return [True]

@@ -29,4 +29,11 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
                             uint32_t out_bits, uint32_t out_shift, const int16_t *__restrict__ dta,
                             const int8_t *__restrict__ R, uint32_t decay_mode, int32_t resid_mul);
 
+// StaticScan_NE16 (constant-parameter Mamba-2 block as per-head NE16 1x1 jobs over the whole window), see SSDScanNE16.c
+void GAP9_StaticScanNE16_i8(const int8_t *__restrict__ x, const int8_t *__restrict__ z, const uint8_t *__restrict__ wenc,
+                            const int32_t *__restrict__ comp, const int32_t *__restrict__ M,
+                            const int32_t *__restrict__ Dq, int32_t *__restrict__ y,
+                            const int32_t *__restrict__ gate_lut, uint8_t *__restrict__ scratch, uint32_t L, uint32_t P,
+                            uint32_t NHt, int32_t out_shift);
+
 #endif // __DEEPLOY_MATH_GAP9_SSDSCAN_NE16_KERNEL_HEADER_
