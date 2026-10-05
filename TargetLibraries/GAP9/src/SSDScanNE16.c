@@ -37,6 +37,8 @@
 #define SSDN_OUT_SHIFT 40
 #define SSDN_SLOTS 2
 #define SSDN_META_HDR 8
+// SSDN_PROFILE=1 prints per-call phase timings; printf on the 1 KB cluster stacks can corrupt them and crash
+// gvsoc after the first call (use Deeploy's --profileTiling per-tile numbers for whole-network measurements)
 #ifndef SSDN_PROFILE
 #define SSDN_PROFILE 0
 #endif
@@ -1415,11 +1417,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   }
   pi_cl_team_barrier();
 #if SSDN_PROFILE
-  static PI_L1 uint32_t ssdn_ncall;
-  if (core == 0) ssdn_ncall++;
-  pi_cl_team_barrier();
-  if (ssdn_ncall != 25) return;
-  if (core == 0) printf("SSDN_PROF N=%u NHt=%u L=%u G=%u A=%u B=%u total=%u entry=%u core0: dispatch=%u resolve_wait=%u\n", prof_N, NHt, L, prof_G, prof_A, prof_B, pi_perf_read(PI_PERF_CYCLES) - prof_t0, prof_t0, pb_disp, pb_res);
+  if (core == 0) printf("SSDN_PROF N=%u NHt=%u L=%u G=%u A=%u B=%u total=%u core0: dispatch=%u resolve_wait=%u\n", prof_N, NHt, L, prof_G, prof_A, prof_B, pi_perf_read(PI_PERF_CYCLES) - prof_t0, pb_disp, pb_res);
   pi_cl_team_barrier();
   if (core == 1) { (void)pb_epi; (void)pb_upd; }
   if (core == 1) { ssdn_p1[0] = ssdn_p_epi; ssdn_p1[1] = ssdn_p_upd; ssdn_p1[2] = pb_bar; }
