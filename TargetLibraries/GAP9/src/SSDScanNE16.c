@@ -326,7 +326,7 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
     for (uint32_t t = 0; t < Q; t++) {
       for (uint32_t s = 0; s <= t; s++) {
         const int32_t e = (s == t) ? SSDN_ONE_Q15 : ssdn_expq(exp_lut, lam[t] - lam[s]);
-        const int32_t Gh = ts ? G[t * Q + s] : (int32_t)(((int64_t)G[t * Q + s] * (int64_t)dth[s * NHt]) >> 8);
+        const int32_t Gh = (int32_t)(((int64_t)G[t * Q + s] * (ts ? (int64_t)256 : (int64_t)dth[s * NHt])) >> 8);
         const int32_t m = (int32_t)(((int64_t)Gh * e) >> 15);
         cscr[t * Q + s] = m;
         mx = ssdn_absmax(mx, m);
@@ -340,9 +340,9 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
     // dBd[s][n] = ((dt_s*B[s][n]) >> 8) * e_Qs[s] >> 15  ->  W2[n][s]
     for (uint32_t s = 0; s < Q; s++) {
       const int32_t eQ = (s + 1 < Q) ? ssdn_expq(exp_lut, lam[Q - 1] - lam[s]) : SSDN_ONE_Q15;
-      const int64_t dts = (int64_t)dth[s * NHt];
+      const int64_t dts = ts ? (int64_t)256 : (int64_t)dth[s * NHt];  // two-scale: no dt in the weights (x256 >> 8 exact)
       for (uint32_t n = 0; n < N; n++) {
-        const int32_t dB = ts ? Bk[s * N + n] : (int32_t)((dts * (int64_t)Bk[s * N + n]) >> 8);
+        const int32_t dB = (int32_t)((dts * (int64_t)Bk[s * N + n]) >> 8);
         const int32_t m = (int32_t)(((int64_t)dB * eQ) >> 15);
         cscr[s * N + n] = m;
         mx = ssdn_absmax(mx, m);
@@ -392,8 +392,8 @@ static __attribute__((noinline)) void ssdn_epilogue_ts(const ssdn_ctx_t *cx, uin
       int32_t *yr = y32 + row;
       const int32_t c1 = c1v[t], c3 = c3v[t];
       const int64_t g1 = f1[t], g3 = f3[t];
-      const int32_t *p1 = a1 + t + cb * Q, *p3 = a3 + t + cb * Q;
-      for (uint32_t c = cb; c < ce; c++, p1 += Q, p3 += Q) {
+      const int32_t *p1 = a1 + t + cb * (Q + N), *p3 = a3 + t + cb * Q;
+      for (uint32_t c = cb; c < ce; c++, p1 += Q + N, p3 += Q) {
         const int64_t u1 = ((int64_t)(*p1 - c1) * g1) >> 15;
         const int64_t u3 = ((int64_t)(*p3 - c3) * g3) >> 15;
         const int64_t y_acc = (ex1 >= 0 ? (u1 << ex1) : (u1 >> (-ex1))) + (ex3 >= 0 ? (u3 << ex3) : (u3 >> (-ex3))) +
@@ -441,8 +441,8 @@ static __attribute__((noinline)) void ssdn_epi_v2(const ssdn_ctx_t *cx, uint32_t
       const int8_t *xr = x + row, *zr = z + row;
       int8_t *yr = y + row;
       const int32_t c1 = comp1[t], c3 = comp3[t];
-      const int32_t *p1 = a1 + t + cb * Q, *p3 = a3 + t + cb * Q;
-      for (uint32_t c = cb; c < ce; c++, p1 += Q, p3 += Q) {
+      const int32_t *p1 = a1 + t + cb * (Q + N), *p3 = a3 + t + cb * Q;
+      for (uint32_t c = cb; c < ce; c++, p1 += Q + N, p3 += Q) {
         const int32_t v1 = *p1 - c1;
         const int32_t v3 = *p3 - c3;
         const int32_t dx = D32 * (int32_t)xr[c];
@@ -483,8 +483,8 @@ static __attribute__((noinline)) void ssdn_epi_out32(const ssdn_ctx_t *cx, uint3
       const int8_t *xr = x + row, *zr = z + row;
       int32_t *yr = y32 + row;
       const int32_t c1 = comp1[t], c3 = comp3[t];
-      const int32_t *p1 = a1 + t + cb * Q, *p3 = a3 + t + cb * Q;
-      for (uint32_t c = cb; c < ce; c++, p1 += Q, p3 += Q) {
+      const int32_t *p1 = a1 + t + cb * (Q + N), *p3 = a3 + t + cb * Q;
+      for (uint32_t c = cb; c < ce; c++, p1 += Q + N, p3 += Q) {
         const int64_t v1 = (int64_t)(*p1 - c1);
         const int64_t v3 = (int64_t)(*p3 - c3);
         const int64_t y_acc = ((v1 << l1) >> r1) + ((v3 << l3) >> r3) + D_h * (int64_t)xr[c];
@@ -516,8 +516,8 @@ static __attribute__((noinline)) void ssdn_epi_v1(const ssdn_ctx_t *cx, uint32_t
     const int8_t *xr = x + row, *zr = z + row;
     int8_t *yr = y + row;
     const int32_t c1 = comp1[t], c3 = comp3[t];
-    const int32_t *p1 = a1 + t + cb * Q, *p3 = a3 + t + cb * Q;
-    for (uint32_t c = cb; c < ce; c++, p1 += Q, p3 += Q) {
+    const int32_t *p1 = a1 + t + cb * (Q + N), *p3 = a3 + t + cb * Q;
+    for (uint32_t c = cb; c < ce; c++, p1 += Q + N, p3 += Q) {
       const int64_t v1 = (int64_t)(*p1 - c1);
       const int64_t v3 = (int64_t)(*p3 - c3);
       const int64_t y_acc = ((v1 << l1) >> r1) + ((v3 << l3) >> r3) + D_h * (int64_t)xr[c];
@@ -544,7 +544,8 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
   const uint32_t pf0 = pi_perf_read(PI_PERF_CYCLES);
 #endif
   const uint32_t s0 = wi * sch < PN ? wi * sch : PN, s1 = s0 + sch < PN ? s0 + sch : PN;
-  const int32_t *a1 = cx->acc + (hp & 1) * cx->ASZ, *a2 = a1 + cx->PXA * Q, *a3 = a2 + cx->PXA * N;
+  // acc slot: [px][Q + N] (acc1 | acc2 interleaved per pixel, one NE16 job) then acc3 [px][Q]
+  const int32_t *a1 = cx->acc + (hp & 1) * cx->ASZ, *a2 = a1 + Q, *a3 = a1 + cx->PXA * (Q + N);
   const int32_t *mt = meta + hp * cx->MSZ;
   const int ts = cx->decay_mode == 1;
   // two-scale: W2's shift and +128 compensation are shared (head 0); acc2 is in units of the head's data scale
@@ -570,7 +571,7 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
   uint32_t mxs = 0;
   for (uint32_t c = s0 / N; c < P && c * N < s1; c++) {
     int32_t *hr = hs + c * N;
-    const int32_t *ar = a2 + c * N;
+    const int32_t *ar = a2 + c * (Q + N);
     const uint32_t nb = c * N < s0 ? s0 - c * N : 0, ne = (c + 1) * N > s1 ? s1 - c * N : N;
     for (uint32_t n = nb; n < ne; n++) {
       const int64_t dec = (eQ0 * (int64_t)hr[n]) >> 15;
@@ -624,8 +625,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   const ne16_dev_t *dev = ne16_pulp_get_dev();
   if (core == 0) {
     for (uint32_t s = 0; s < SSDN_SLOTS; s++) {
-      ssdn_task_setup(&ssdn_tasks[s][0], Q, Q, GH, GW);
-      ssdn_task_setup(&ssdn_tasks[s][1], Q, N, GH, GW);
+      ssdn_task_setup(&ssdn_tasks[s][0], Q, Q + N, GH, GW);  // J1 | J2: same input, W1 and W2 stacked on Ko
       ssdn_task_setup(&ssdn_tasks[s][2], N, Q, GH, GW);
     }
   }
@@ -752,9 +752,8 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
           const uint32_t sl = hh & 1;
           const uint8_t *we = wenc + (decay_mode == 1 ? 0 : hh * WSZ);
           int32_t *a = acc + sl * ASZ;
-          ssdn_dispatch(dev, &ssdn_tasks[sl][0], xt + hh * PXA * Q, we, a);
-          ssdn_dispatch(dev, &ssdn_tasks[sl][1], xt + hh * PXA * Q, we + Q * Q, a + PXA * Q);
-          ssdn_dispatch(dev, &ssdn_tasks[sl][2], su + hh * PXA * N, we + Q * Q + N * Q, a + PXA * Q + PXA * N);
+          ssdn_dispatch(dev, &ssdn_tasks[sl][0], xt + hh * PXA * Q, we, a);   // encoded W1 rows then W2 rows
+          ssdn_dispatch(dev, &ssdn_tasks[sl][2], su + hh * PXA * N, we + Q * Q + N * Q, a + PXA * (Q + N));
         }
         SSDN_T(pb_t1);
 #if SSDN_PROFILE
