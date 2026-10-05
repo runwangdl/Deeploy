@@ -56,13 +56,19 @@ class SSDScanNE16TileConstraint(SSDScanTileConstraint):
         return tilerModel
 
     @staticmethod
+    def constructSymbolicNodeRep(tilerModel: TilerModel, parseDict: Dict, ctxt: NetworkContext) -> Dict:
+        rep = SSDScanTileConstraint.constructSymbolicNodeRep(tilerModel, parseDict, ctxt)
+        rep['d_state'] = parseDict['d_state']   # pinned by the policy; B's last dim is N * mimo_rank
+        return rep
+
+    @staticmethod
     def addPolicyConstraint(tilerModel: TilerModel, parseDict: Dict, ctxt: NetworkContext) -> TilerModel:
         xBuffer = ctxt.lookup(name = parseDict["x"])
         BBuffer = ctxt.lookup(name = parseDict["B"])
         ABuffer = ctxt.lookup(name = parseDict["A"])
 
         dStateVar = tilerModel.getTensorDimVar(tensorName = BBuffer.name, dimIdx = len(BBuffer.shape) - 1)
-        tilerModel.addConstraint(dStateVar == parseDict['d_state'])
+        tilerModel.addConstraint(dStateVar == parseDict['d_state'] * int(parseDict.get('mimo_rank', 1)))
         tilerModel.addConstraint(tilerModel.getTensorDimVar(tensorName = xBuffer.name, dimIdx = 0) == xBuffer.shape[0])
 
         nHeads = ABuffer.shape[0]
@@ -105,5 +111,5 @@ class SSDScanNE16TileConstraint(SSDScanTileConstraint):
             for sched, cube in zip(schedule.inputLoadSchedule, [c.rectangle for c in reordered]):
                 (bo, lo, do), (bs, ls, ds) = cube.offset, cube.dims
                 sched["dta"] = HyperRectangle((bo, lo, 0), (bs, ls, 1))
-                sched["R"] = HyperRectangle((bo, lo, do // headDim), (bs, ls, ds // headDim))
+                sched["R"] = HyperRectangle((bo, lo, do // headDim), (bs, ls, ds // headDim))  # rank 1 only
         return varRep, schedule

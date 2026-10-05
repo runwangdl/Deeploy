@@ -202,6 +202,8 @@ typedef struct {
   int32_t ep2_SG, mul_q40; uint32_t b, L, t0, NHt, P, N, Q, PXA, WSZ, ASZ, MSZ, d_inner, epilogue_version, out_bits, out_shift;
   const int16_t *dta; const int8_t *R; uint32_t decay_mode; int32_t resid_mul;  // two-scale decay (decay_mode 1)
   const int16_t *m3g, *m3w, *m3th; int32_t *rot, *thstate; uint32_t m3;          // Mamba-3 rank 1 (gamma, w, theta)
+  uint32_t Rk;                                                                    // Mamba-3 MIMO rank (1 otherwise)
+  int32_t *mtab;   // MIMO: per head [Q*Q e_ts | Q e_Qs | Q e_t0 | QR + N + QR row maxima]
 } ssdn_ctx_t;
 // one shared context in L1 (same values on every core; core 0 writes it, the following barriers order the reads)
 static PI_L1 ssdn_ctx_t ssdn_cx;
@@ -490,6 +492,313 @@ static __attribute__((noinline)) void ssdn_ts_step3(const ssdn_ctx_t *cx, uint32
   }
 }
 
+// ---- Mamba-3 MIMO (rank R > 1, no RoPE): token axis -> (token, rank) pairs, index t*R + q. W1 [QR][QR], W2 [N][QR],
+// W3 [QR][N]; B, C rows [N*R] ordered (n, r); x, z, y columns of head h: h*P*R + c*R + q (ssd_ne16_ref mimo).
+// The matrices are quantised in two passes (max, then recompute) instead of through the per-core scratch.
+static __attribute__((noinline)) void ssdn_mimo_item(const ssdn_ctx_t *cx, uint32_t it, int32_t *tab, int32_t *lam) {
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, NHt = cx->NHt, P = cx->P, N = cx->N, Q = cx->Q, R = cx->Rk;
+  const uint32_t QR = Q * R, NR = N * R, PXA = cx->PXA, WSZ = cx->WSZ, MSZ = cx->MSZ, d_inner = cx->d_inner;
+  const int16_t *exp_lut = cx->exp_lut;
+  const uint32_t hh = it >> 2, part = it & 3;
+  int32_t *mt = cx->meta + hh * MSZ;
+  int32_t *comp1 = mt + SSDN_META_HDR, *comp2 = comp1 + QR, *comp3 = comp2 + N;
+  int8_t *W1 = cx->w8 + hh * WSZ, *W2 = W1 + QR * QR, *W3 = W2 + N * QR;
+  uint8_t *we = cx->wenc + hh * WSZ;
+  const int16_t *dth = cx->dt + (b * L + t0) * NHt + hh;
+  const int16_t *kw = cx->m3 ? cx->m3w + (b * L + t0) * NHt + hh : dth;   // off-diagonal / state weight
+  const int16_t *kg = cx->m3 ? cx->m3g + (b * L + t0) * NHt + hh : dth;   // diagonal weight
+  if (part == 3) {
+    uint32_t mx = 0;
+    for (uint32_t i = 0; i < NUM_CORES; i++) {
+      const uint32_t m = (uint32_t)cx->hmax[(b * NHt + hh) * NUM_CORES + i];
+      mx = m > mx ? m : mx;
+    }
+    const int shs = ssdn_pow2_exp(mx);
+    const int32_t *hs = cx->h_state + (b * NHt + hh) * P * N;
+    uint8_t *su_h = cx->su + hh * PXA * N;
+    for (uint32_t i = 0; i < P * N; i++)
+      su_h[i] = (uint8_t)(ssdn_qshift(hs[i], shs) ^ 0x80);
+    mt[3] = shs;
+    uint8_t *xt_h = cx->xt + hh * PXA * QR;          // xt[c][(s,r)] = x[s][h*P*R + c*R + r] (+128)
+    for (uint32_t s_ = 0; s_ < Q; s_++) {
+      const uint8_t *xrow = (const uint8_t *)cx->x + (b * L + t0 + s_) * d_inner + hh * P * R;
+      for (uint32_t c = 0; c < P; c++)
+        for (uint32_t r = 0; r < R; r++)
+          xt_h[c * QR + s_ * R + r] = xrow[c * R + r] ^ 0x80;
+    }
+    return;
+  }
+  {
+    const int64_t A_h = (int64_t)cx->A[hh];
+    int32_t running = 0;
+    for (uint32_t t = 0; t < Q; t++) {
+      running += (int32_t)(((int64_t)dth[t * NHt] * A_h) >> 8);
+      lam[t] = running;
+    }
+  }
+  // decay tables in the core's scratch (tab[0..Q*Q): e_ts (ONE on the diagonal, 0 above); tab[Q*Q..+Q): e_Qs;
+  // tab[Q*Q+Q..+Q): e_t0), then two passes: max -> pow2 shift; int8 weights row-major [KO][KI], comp = 128 * row sum
+  // the tables (Q*Q + 2Q words) run past the matrix scratch into lam[]: work from a local copy of lam (Q <= 32)
+  int32_t lamv[32];
+  for (uint32_t t = 0; t < Q; t++)
+    lamv[t] = lam[t];
+  int32_t *ets = tab, *eQs = tab + Q * Q, *et0 = eQs + Q;
+  for (uint32_t t = 0; t < Q; t++) {
+    for (uint32_t s_ = 0; s_ < Q; s_++)
+      ets[t * Q + s_] = s_ > t ? 0 : (s_ == t ? SSDN_ONE_Q15 : ssdn_expq(exp_lut, lamv[t] - lamv[s_]));
+    eQs[t] = (t + 1 < Q) ? ssdn_expq(exp_lut, lamv[Q - 1] - lamv[t]) : SSDN_ONE_Q15;
+    et0[t] = ssdn_expq(exp_lut, lamv[t]);
+  }
+  uint32_t KO, KI;
+  int8_t *W; int32_t *comp; uint8_t *wenc_p;
+  if (part == 0) { KO = QR; KI = QR; W = W1; comp = comp1; wenc_p = we; }
+  else if (part == 1) { KO = N; KI = QR; W = W2; comp = comp2; wenc_p = we + QR * QR; }
+  else { KO = QR; KI = N; W = W3; comp = comp3; wenc_p = we + QR * QR + N * QR; }
+  uint32_t mx = 0;
+  for (int pass = 0; pass < 2; pass++) {
+    const int sh = pass ? ssdn_pow2_exp(mx) : 0;
+#define SSDN_MIMO_EMIT(v)                                    \
+  do {                                                       \
+    const int32_t v_ = (v);                                  \
+    if (!pass) {                                             \
+      mx = ssdn_absmax(mx, v_);                              \
+    } else {                                                 \
+      const int8_t w8_ = (int8_t)ssdn_qshift(v_, sh);        \
+      *wp++ = w8_;                                           \
+      csum += w8_;                                           \
+    }                                                        \
+  } while (0)
+    int8_t *wp = W;
+    if (part == 0) {        // W1[(t,q)][(s,r)] = asr(asr(G * k, 8) * e_ts, 15), k = w[s] (s < t) | gamma[t] (s == t)
+      for (uint32_t t = 0; t < Q; t++)
+        for (uint32_t q = 0; q < R; q++) {
+          int32_t csum = 0;
+          const int32_t *Grow = cx->G + (t * R + q) * QR;
+          for (uint32_t s_ = 0; s_ < Q; s_++) {
+            const int32_t e = ets[t * Q + s_];
+            const int64_t k = (s_ == t) ? (int64_t)kg[t * NHt] : (int64_t)kw[s_ * NHt];
+            for (uint32_t r = 0; r < R; r++) {
+              const int32_t Gh = (int32_t)(((int64_t)Grow[s_ * R + r] * k) >> 8);
+              SSDN_MIMO_EMIT(e ? (int32_t)(((int64_t)Gh * e) >> 15) : 0);
+            }
+          }
+          if (pass) comp[t * R + q] = 128 * csum;
+        }
+    } else if (part == 1) { // W2[n][(s,r)] = asr(asr(w_s B[s][n,r], 8) e_Qs[s], 15)
+      for (uint32_t n = 0; n < N; n++) {
+        int32_t csum = 0;
+        for (uint32_t s_ = 0; s_ < Q; s_++) {
+          const int64_t k = (int64_t)kw[s_ * NHt];
+          const int32_t *Br = cx->Bk + s_ * NR + n * R;
+          for (uint32_t r = 0; r < R; r++) {
+            const int32_t dB = (int32_t)((k * (int64_t)Br[r]) >> 8);
+            SSDN_MIMO_EMIT((int32_t)(((int64_t)dB * eQs[s_]) >> 15));
+          }
+        }
+        if (pass) comp[n] = 128 * csum;
+      }
+    } else {                // W3[(t,q)][n] = asr(C[t][n,q] e(lam_t), 15)
+      for (uint32_t t = 0; t < Q; t++)
+        for (uint32_t q = 0; q < R; q++) {
+          int32_t csum = 0;
+          const int32_t *Cr = cx->Ck + t * NR + q;
+          for (uint32_t n = 0; n < N; n++)
+            SSDN_MIMO_EMIT((int32_t)(((int64_t)Cr[n * R] * et0[t]) >> 15));
+          if (pass) comp[t * R + q] = 128 * csum;
+        }
+    }
+#undef SSDN_MIMO_EMIT
+    if (pass)
+      mt[part] = sh;
+  }
+  if (part == 2)
+    mt[4] = et0[Q - 1];
+  ssdn_repack(W, wenc_p, KO, KI);
+}
+
+// ---- MIMO phase A over all cores: step 0 decay tables per head; step 1 row maxima (W1 rows, W2 rows, W3 rows) and the
+// data (S8, xt); step 2 per-matrix pow2 shift, quantise + repack each row. Same values as ssdn_mimo_item.
+static inline uint32_t ssdn_mimo_tabsz(uint32_t Q, uint32_t QR, uint32_t N) { return Q * Q + 2 * Q + 2 * QR + N; }
+
+static __attribute__((noinline)) void ssdn_mimo_tables(const ssdn_ctx_t *cx, uint32_t hh) {
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, NHt = cx->NHt, N = cx->N, Q = cx->Q, QR = Q * cx->Rk;
+  int32_t *tab = cx->mtab + hh * ssdn_mimo_tabsz(Q, QR, N);
+  int32_t *ets = tab, *eQs = tab + Q * Q, *et0 = eQs + Q;
+  const int16_t *dth = cx->dt + (b * L + t0) * NHt + hh;
+  const int64_t A_h = (int64_t)cx->A[hh];
+  int32_t lamv[32], running = 0;
+  for (uint32_t t = 0; t < Q; t++) {
+    running += (int32_t)(((int64_t)dth[t * NHt] * A_h) >> 8);
+    lamv[t] = running;
+  }
+  for (uint32_t t = 0; t < Q; t++) {
+    for (uint32_t s_ = 0; s_ < Q; s_++)
+      ets[t * Q + s_] = s_ > t ? 0 : (s_ == t ? SSDN_ONE_Q15 : ssdn_expq(cx->exp_lut, lamv[t] - lamv[s_]));
+    eQs[t] = (t + 1 < Q) ? ssdn_expq(cx->exp_lut, lamv[Q - 1] - lamv[t]) : SSDN_ONE_Q15;
+    et0[t] = ssdn_expq(cx->exp_lut, lamv[t]);
+  }
+}
+
+// values of one row: mat 0 = W1 row (t,q) [QR], 1 = W2 row n [QR], 2 = W3 row (t,q) [N]
+static inline uint32_t ssdn_mimo_rowvals(const ssdn_ctx_t *cx, uint32_t hh, uint32_t mat, uint32_t ko, int32_t *v) {
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, NHt = cx->NHt, N = cx->N, Q = cx->Q, R = cx->Rk;
+  const uint32_t QR = Q * R, NR = N * R;
+  const int32_t *tab = cx->mtab + hh * ssdn_mimo_tabsz(Q, QR, N);
+  const int32_t *ets = tab, *eQs = tab + Q * Q, *et0 = eQs + Q;
+  const int16_t *dth = cx->dt + (b * L + t0) * NHt + hh;
+  const int16_t *kw = cx->m3 ? cx->m3w + (b * L + t0) * NHt + hh : dth;
+  const int16_t *kg = cx->m3 ? cx->m3g + (b * L + t0) * NHt + hh : dth;
+  uint32_t i = 0;
+  if (mat == 0) {
+    const uint32_t t = ko / R;
+    const int32_t *Grow = cx->G + ko * QR;
+    for (uint32_t s_ = 0; s_ < Q; s_++) {
+      const int32_t e = ets[t * Q + s_];
+      const int64_t k = (s_ == t) ? (int64_t)kg[t * NHt] : (int64_t)kw[s_ * NHt];
+      for (uint32_t r = 0; r < R; r++, i++)
+        v[i] = e ? (int32_t)(((int64_t)(int32_t)(((int64_t)Grow[s_ * R + r] * k) >> 8) * e) >> 15) : 0;
+    }
+  } else if (mat == 1) {
+    for (uint32_t s_ = 0; s_ < Q; s_++) {
+      const int64_t k = (int64_t)kw[s_ * NHt];
+      const int32_t *Br = cx->Bk + s_ * NR + ko * R;
+      for (uint32_t r = 0; r < R; r++, i++)
+        v[i] = (int32_t)(((int64_t)(int32_t)((k * (int64_t)Br[r]) >> 8) * eQs[s_]) >> 15);
+    }
+  } else {
+    const uint32_t t = ko / R, q = ko - t * R;
+    const int32_t *Cr = cx->Ck + t * NR + q;
+    for (uint32_t n = 0; n < N; n++, i++)
+      v[i] = (int32_t)(((int64_t)Cr[n * R] * et0[t]) >> 15);
+  }
+  return i;
+}
+
+// step 1 unit u of [0, NHt * (2QR + N)) rows, then the data units
+static __attribute__((noinline)) void ssdn_mimo_step1(const ssdn_ctx_t *cx, uint32_t core) {
+  const uint32_t NHt = cx->NHt, N = cx->N, Q = cx->Q, R = cx->Rk, QR = Q * R, P = cx->P, b = cx->b, L = cx->L, t0 = cx->t0;
+  const uint32_t rows = 2 * QR + N, TS = ssdn_mimo_tabsz(Q, QR, N);
+  int32_t v[64];
+  for (uint32_t u = core; u < NHt * rows; u += NUM_CORES) {
+    const uint32_t hh = u / rows, rr = u - hh * rows;
+    const uint32_t mat = rr < QR ? 0 : (rr < QR + N ? 1 : 2), ko = mat == 0 ? rr : (mat == 1 ? rr - QR : rr - QR - N);
+    const uint32_t n = ssdn_mimo_rowvals(cx, hh, mat, ko, v);
+    uint32_t mx = 0;
+    for (uint32_t i = 0; i < n; i++)
+      mx = ssdn_absmax(mx, v[i]);
+    cx->mtab[hh * TS + Q * Q + 2 * Q + rr] = (int32_t)mx;
+  }
+  // data: S8 rows (channels) and xt rows (channels) per head, channels over the cores
+  for (uint32_t u = core; u < NHt * P; u += NUM_CORES) {
+    const uint32_t hh = u / P, c = u - hh * P;
+    uint32_t mx = 0;
+    for (uint32_t i = 0; i < NUM_CORES; i++) {
+      const uint32_t m = (uint32_t)cx->hmax[(b * NHt + hh) * NUM_CORES + i];
+      mx = m > mx ? m : mx;
+    }
+    const int shs = ssdn_pow2_exp(mx);
+    if (c == 0)
+      cx->meta[hh * cx->MSZ + 3] = shs;
+    const int32_t *hs = cx->h_state + (b * NHt + hh) * P * N + c * N;
+    uint8_t *su_r = cx->su + hh * cx->PXA * N + c * N;
+    for (uint32_t k = 0; k < N; k++)
+      su_r[k] = (uint8_t)(ssdn_qshift(hs[k], shs) ^ 0x80);
+    uint8_t *xt_r = cx->xt + hh * cx->PXA * QR + c * QR;
+    const uint8_t *xs = (const uint8_t *)cx->x + (b * L + t0) * cx->d_inner + hh * P * R + c * R;
+    for (uint32_t s_ = 0; s_ < Q; s_++)
+      for (uint32_t r = 0; r < R; r++)
+        xt_r[s_ * R + r] = xs[s_ * cx->d_inner + r] ^ 0x80;
+  }
+}
+
+// step 2: shifts from the row maxima; quantise + comp + repack each row
+static __attribute__((noinline)) void ssdn_mimo_step2(const ssdn_ctx_t *cx, uint32_t core) {
+  const uint32_t NHt = cx->NHt, N = cx->N, Q = cx->Q, R = cx->Rk, QR = Q * R, WSZ = cx->WSZ, MSZ = cx->MSZ;
+  const uint32_t rows = 2 * QR + N, TS = ssdn_mimo_tabsz(Q, QR, N);
+  int32_t v[64];
+  for (uint32_t u = core; u < NHt * rows; u += NUM_CORES) {
+    const uint32_t hh = u / rows, rr = u - hh * rows;
+    const uint32_t mat = rr < QR ? 0 : (rr < QR + N ? 1 : 2), ko = mat == 0 ? rr : (mat == 1 ? rr - QR : rr - QR - N);
+    const int32_t *rmx = cx->mtab + hh * TS + Q * Q + 2 * Q;
+    const uint32_t r0 = mat == 0 ? 0 : (mat == 1 ? QR : QR + N), r1 = mat == 0 ? QR : (mat == 1 ? QR + N : rows);
+    uint32_t mx = 0;
+    for (uint32_t i = r0; i < r1; i++)
+      mx = (uint32_t)rmx[i] > mx ? (uint32_t)rmx[i] : mx;
+    const int sh = ssdn_pow2_exp(mx);
+    int32_t *mt = cx->meta + hh * MSZ;
+    if (ko == 0)
+      mt[mat] = sh;
+    const uint32_t KI = mat == 2 ? N : QR;
+    int8_t *W = cx->w8 + hh * WSZ + (mat == 0 ? 0 : (mat == 1 ? QR * QR : QR * QR + N * QR)) + ko * KI;
+    int32_t *comp = mt + SSDN_META_HDR + (mat == 0 ? 0 : (mat == 1 ? QR : QR + N));
+    const uint32_t n = ssdn_mimo_rowvals(cx, hh, mat, ko, v);
+    int32_t csum = 0;
+    for (uint32_t i = 0; i < n; i++) {
+      const int8_t w8 = (int8_t)ssdn_qshift(v[i], sh);
+      W[i] = w8;
+      csum += w8;
+    }
+    comp[ko] = 128 * csum;
+    ssdn_repack(W, cx->wenc + hh * WSZ + (mat == 0 ? 0 : (mat == 1 ? QR * QR : QR * QR + N * QR)) + ko * (KI / 16) * 16, 1, KI);
+    if (mat == 2 && ko == 0) {
+      const int32_t *et0 = cx->mtab + hh * TS + Q * Q + Q;
+      mt[4] = et0[Q - 1];
+    }
+  }
+}
+
+// MIMO epilogue v2 (int8 out): ssd_ne16_ref mimo; flattened (t, c) range, inner rank q
+static __attribute__((noinline)) void ssdn_epi_mimo_v2(const ssdn_ctx_t *cx, uint32_t hp, uint32_t e0, uint32_t e1) {
+  const int8_t *x = cx->x, *z = cx->z; int8_t *y = (int8_t *)cx->y;
+  const int16_t *gm16 = cx->gm16; const int32_t ep2_SG = cx->ep2_SG;
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, P = cx->P, N = cx->N, Q = cx->Q, R = cx->Rk, d_inner = cx->d_inner;
+  const uint32_t QR = Q * R;
+  const int32_t *mt = cx->meta + hp * cx->MSZ;
+  const int32_t *a1 = cx->acc + (hp & 1) * cx->ASZ, *a3 = a1 + cx->PXA * (QR + N);
+  const int32_t *comp1 = mt + SSDN_META_HDR, *comp3 = comp1 + QR + N;
+  const int sh1 = mt[0], e3 = mt[2] + mt[3] - 15;
+  const int64_t D_h = (int64_t)cx->D_skip[hp];
+  const int64_t b1a = ((int64_t)1 << 18) * (QR > 16 ? QR : 16) / 16;
+  const int64_t b1 = sh1 >= 0 ? b1a << sh1 : b1a >> (-sh1);
+  const int64_t bN = ((int64_t)1 << 18) * (N > 16 ? N : 16) / 16;
+  const int64_t b3 = e3 >= 0 ? bN << e3 : bN >> (-e3);
+  const int64_t bound = b1 + b3 + (D_h < 0 ? -D_h : D_h) * 128;
+  int bl = 0;
+  while (bl < 64 && (bound >> bl) != 0)
+    bl++;
+  const int ysh = bl > 15 ? bl - 15 : 0;
+  const int S = 53 - ep2_SG - ysh;
+  const int sr = S > 0 ? S : 0, sl = S < 0 ? -S : 0;
+  const int32_t half = sr > 0 ? (1 << (sr - 1)) : 0;
+  const int s1 = ysh - sh1, s3 = ysh - e3;
+  const int32_t h1 = s1 > 0 ? (1 << (s1 - 1)) : 0, h3 = s3 > 0 ? (1 << (s3 - 1)) : 0;
+  const int32_t hd = ysh > 0 ? (1 << (ysh - 1)) : 0;
+  const int32_t D32 = (int32_t)D_h;
+  for (uint32_t t = e0 / P; t < Q && t * P < e1; t++) {
+    const uint32_t cb = t * P < e0 ? e0 - t * P : 0, ce = (t + 1) * P > e1 ? e1 - t * P : P;
+    const uint32_t row = (b * L + t0 + t) * d_inner + hp * P * R;
+    for (uint32_t c = cb; c < ce; c++) {
+      const int32_t *p1 = a1 + c * (QR + N) + t * R, *p3 = a3 + c * QR + t * R;
+      for (uint32_t q = 0; q < R; q++) {
+        const uint32_t col = row + c * R + q;
+        const int32_t v1 = p1[q] - comp1[t * R + q];
+        const int32_t v3 = p3[q] - comp3[t * R + q];
+        const int32_t dx = D32 * (int32_t)x[col];
+        const int32_t t1 = s1 > 0 ? (v1 >= 0 ? ((v1 + h1) >> s1) : -(((-v1) + h1) >> s1)) : v1;
+        const int32_t t3 = s3 > 0 ? (v3 >= 0 ? ((v3 + h3) >> s3) : -(((-v3) + h3) >> s3)) : v3;
+        const int32_t td = ysh > 0 ? (dx >= 0 ? ((dx + hd) >> ysh) : -(((-dx) + hd) >> ysh)) : dx;
+        const int32_t prod = (t1 + t3 + td) * (int32_t)gm16[(int32_t)z[col] + 128];
+        int32_t yv;
+        if (sr > 0)
+          yv = prod >= 0 ? ((prod + half) >> sr) : -(((-prod) + half) >> sr);
+        else
+          yv = prod << sl;
+        y[col] = (int8_t)(yv > 127 ? 127 : (yv < -128 ? -128 : yv));
+      }
+    }
+  }
+}
+
 // y epilogue variants (int8 v2 / int32 / int8 v1), rows t of head hp in [e0, e1) of the flattened (t, c) range
 static __attribute__((noinline)) void ssdn_epi_v2(const ssdn_ctx_t *cx, uint32_t hp, uint32_t e0, uint32_t e1) {
   const int8_t *x = cx->x, *z = cx->z; int8_t *y = (int8_t *)cx->y; int32_t *y32 = (int32_t *)cx->y;
@@ -630,17 +939,20 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
   const uint32_t pf0 = pi_perf_read(PI_PERF_CYCLES);
 #endif
   const uint32_t s0 = wi * sch < PN ? wi * sch : PN, s1 = s0 + sch < PN ? s0 + sch : PN;
-  // acc slot: [px][Q + N] (acc1 | acc2 interleaved per pixel, one NE16 job) then acc3 [px][Q]
-  const int32_t *a1 = cx->acc + (hp & 1) * cx->ASZ, *a2 = a1 + Q, *a3 = a1 + cx->PXA * (Q + N);
+  // acc slot: [px][QR + N] (acc1 | acc2 interleaved per pixel, one NE16 job) then acc3 [px][QR]; QR = Q * rank
+  const uint32_t QR = Q * cx->Rk;
+  const int32_t *a1 = cx->acc + (hp & 1) * cx->ASZ, *a2 = a1 + QR, *a3 = a1 + cx->PXA * (QR + N);
   const int32_t *mt = meta + hp * cx->MSZ;
   const int ts = cx->decay_mode == 1;
   // two-scale: W2's shift and +128 compensation are shared (head 0); acc2 is in units of the head's data scale
   const int sh2 = ts ? meta[1] + mt[5] - 8 : mt[1];
-  const int32_t *comp2s = ts ? meta + SSDN_META_HDR + Q : mt + SSDN_META_HDR + Q;
+  const int32_t *comp2s = ts ? meta + SSDN_META_HDR + Q : mt + SSDN_META_HDR + QR;
   const int l2 = sh2 > 0 ? sh2 : 0, r2 = sh2 < 0 ? -sh2 : 0;
   const int64_t eQ0 = (int64_t)mt[4];
   // y epilogue: one variant per call, each in its own frame (the 1 KB slave stacks)
-  if (epilogue_version == 2)
+  if (cx->Rk > 1)
+    ssdn_epi_mimo_v2(cx, hp, e0, e1);
+  else if (epilogue_version == 2)
     ssdn_epi_v2(cx, hp, e0, e1);
   else if (cx->decay_mode == 1)
     ssdn_epilogue_ts(cx, hp, mt, a1, a3, e0, e1);
@@ -657,7 +969,7 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
   uint32_t mxs = 0;
   for (uint32_t c = s0 / N; c < P && c * N < s1; c++) {
     int32_t *hr = hs + c * N;
-    const int32_t *ar = a2 + c * (Q + N);
+    const int32_t *ar = a2 + c * (QR + N);
     const uint32_t nb = c * N < s0 ? s0 - c * N : 0, ne = (c + 1) * N > s1 ? s1 - c * N : N;
     for (uint32_t n = nb; n < ne; n++) {
       const int64_t dec = (eQ0 * (int64_t)hr[n]) >> 15;
@@ -687,36 +999,39 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
                             uint32_t out_bits, uint32_t out_shift, const int16_t *__restrict__ dta,
                             const int8_t *__restrict__ R, uint32_t decay_mode, int32_t resid_mul,
                             const int16_t *__restrict__ m3_gamma, const int16_t *__restrict__ m3_w,
-                            const int16_t *__restrict__ m3_theta, uint32_t mamba3) {
+                            const int16_t *__restrict__ m3_theta, uint32_t mamba3, uint32_t mimo_rank) {
   const int core = (int)pi_core_id();
+  const uint32_t Rk = mimo_rank ? mimo_rank : 1;   // Mamba-3 MIMO rank: the token axis becomes (token, rank) pairs
+  const uint32_t QR = Q * Rk;
   const uint32_t PXA = GH * GW;
-  const uint32_t d_inner = NHt * P;
-  const uint32_t WSZ = Q * Q + N * Q + Q * N;     // int8 per head: W1 | W2 | W3
-  const uint32_t ASZ = PXA * (2 * Q + N);         // int32 per slot: acc1 | acc2 | acc3
-  // int32 per head: sh1 sh2 sh3 shs eQ0 shx - - comp1[Q] comp2[N] comp3[Q] (+ two-scale: f1[Q] f3[Q])
-  const uint32_t MSZ = SSDN_META_HDR + 2 * Q + N + (decay_mode == 1 ? 3 * Q : 0);  // two-scale: f1[Q] f3[Q] gx[Q]
-  const uint32_t QM = Q * (Q > N ? Q : N);        // int32 per-core scratch
+  const uint32_t d_inner = NHt * P * Rk;
+  const uint32_t WSZ = QR * QR + N * QR + QR * N; // int8 per head: W1 | W2 | W3
+  const uint32_t ASZ = PXA * (2 * QR + N);        // int32 per slot: acc1 | acc2 | acc3
+  // int32 per head: sh1 sh2 sh3 shs eQ0 shx - - comp1[QR] comp2[N] comp3[QR] (+ two-scale: f1[Q] f3[Q] gx[Q])
+  const uint32_t MSZ = SSDN_META_HDR + 2 * QR + N + (decay_mode == 1 ? 3 * Q : 0);
+  const uint32_t QM = Q * (Q > N ? Q : N);        // int32 per-core scratch (rank 1; MIMO quantises in two passes)
   const int16_t *exp_lut = SSDScan_exp_lut_ptr;
 
-  uint8_t *xt = scratch;                                    // [NHt][PXA][Q]
-  uint8_t *su = xt + NHt * PXA * Q;                         // [NHt][PXA][N]
+  uint8_t *xt = scratch;                                    // [NHt][PXA][QR]
+  uint8_t *su = xt + NHt * PXA * QR;                        // [NHt][PXA][N]
   int8_t *w8 = (int8_t *)(su + NHt * PXA * N);              // [NHt][WSZ]
   uint8_t *wenc = (uint8_t *)w8 + NHt * WSZ;                // [NHt][WSZ]
   int32_t *acc = (int32_t *)(wenc + NHt * WSZ);             // [SLOTS][ASZ]
   int32_t *meta = acc + SSDN_SLOTS * ASZ;                   // [NHt][MSZ]
-  int32_t *G = meta + NHt * MSZ;                            // [Q][Q]
-  int32_t *cscr = G + Q * Q + (uint32_t)core * (QM + Q);    // [NUM_CORES][QM + Q]: matrix scratch + lam[Q]
-  int16_t *gm16 = (int16_t *)(G + Q * Q + NUM_CORES * (QM + Q)); // [256] epilogue v2 LUT (gate * mul folded)
+  int32_t *G = meta + NHt * MSZ;                            // [QR][QR]
+  int32_t *cscr = G + QR * QR + (uint32_t)core * (QM + Q);  // [NUM_CORES][QM + Q]: matrix scratch + lam[Q]
+  int16_t *gm16 = (int16_t *)(G + QR * QR + NUM_CORES * (QM + Q)); // [256] epilogue v2 LUT (gate * mul folded)
   int32_t ep2_SG = 0;
   int32_t *hmax = h_state + B_size * NHt * P * N;           // [B][NHt][NUM_CORES] per-core |state| maxima
   int32_t *thstate = hmax + B_size * NHt * NUM_CORES;       // Mamba-3: [B][NHt] accumulated RoPE angle
   int32_t *rot = (int32_t *)(gm16 + 256);                   // Mamba-3 RoPE: [NHt][2][Q][N] rotated B, C rows
+  int32_t *mtab = rot + (mamba3 && m3_theta ? NHt * 2 * Q * N : 0);   // MIMO: [NHt][ssdn_mimo_tabsz]
 
   const ne16_dev_t *dev = ne16_pulp_get_dev();
   if (core == 0) {
     for (uint32_t s = 0; s < SSDN_SLOTS; s++) {
-      ssdn_task_setup(&ssdn_tasks[s][0], Q, Q + N, GH, GW);  // J1 | J2: same input, W1 and W2 stacked on Ko
-      ssdn_task_setup(&ssdn_tasks[s][2], N, Q, GH, GW);
+      ssdn_task_setup(&ssdn_tasks[s][0], QR, QR + N, GH, GW);  // J1 | J2: same input, W1 and W2 stacked on Ko
+      ssdn_task_setup(&ssdn_tasks[s][2], N, QR, GH, GW);
     }
   }
 
@@ -779,6 +1094,8 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
     cxp->decay_mode = decay_mode;
     cxp->resid_mul = resid_mul;
     cxp->m3 = mamba3;
+    cxp->Rk = Rk;
+    cxp->mtab = mtab;
     cxp->m3g = m3_gamma;
     cxp->m3w = m3_w;
     cxp->m3th = (mamba3 && m3_theta) ? m3_theta : 0;
@@ -811,12 +1128,27 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
 
     for (int chunk = 0; chunk < number_of_chunks; chunk++) {
       const uint32_t t0 = (uint32_t)chunk * Q;
-      const int32_t *Bk = B + (b * L + t0) * N; // [Q][N]
-      const int32_t *Ck = C + (b * L + t0) * N;
+      const int32_t *Bk = B + (b * L + t0) * N * Rk; // [Q][N*R]
+      const int32_t *Ck = C + (b * L + t0) * N * Rk;
       if (core == 0) { cxp->b = b; cxp->t0 = t0; cxp->Bk = Bk; cxp->Ck = Ck; }  // read after the barrier below
       SSDN_T(prof_g0);
 
-      // ---- shared G[t][s] = (C_t . B_s) >> 15, rows over cores ----
+      // ---- shared G[t][s] = (C_t . B_s) >> 15, rows over cores (MIMO: G[(t,q)][(s,r)] over the rank pairs) ----
+      if (Rk > 1) {
+        for (uint32_t row = (uint32_t)core; row < QR; row += NUM_CORES) {
+          const uint32_t t = row / Rk, q = row - t * Rk;
+          const int32_t *Cr = Ck + t * N * Rk + q;
+          int32_t *Gr = G + row * QR;
+          for (uint32_t s_ = 0; s_ <= t; s_++)            // only s <= t is used (causal)
+            for (uint32_t r = 0; r < Rk; r++) {
+              const int32_t *Br = Bk + s_ * N * Rk + r;
+              int64_t d = 0;
+              for (uint32_t n = 0; n < N; n++)
+                d += (int64_t)Cr[n * Rk] * (int64_t)Br[n * Rk];
+              Gr[s_ * Rk + r] = (int32_t)(d >> 15);
+            }
+        }
+      } else
       for (uint32_t t = (uint32_t)core; t < Q; t += NUM_CORES) {
         for (uint32_t s = 0; s < Q; s++) {
           int64_t d = 0;
@@ -831,7 +1163,15 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
       // ---- phase A: 4 items per head over the cores ----
       // part-major, heaviest part first (3: state quant + x transpose, 1: W2, 2: W3, 0: W1), round-robin over the
       // cores: head-major order gave every core the same part, so cores 3 and 7 did all the heavy items
-      if (decay_mode == 1) {
+      if (Rk > 1) {
+        // MIMO: tables per head; row maxima + data over all cores; quantise + repack rows over all cores
+        for (uint32_t hh = (uint32_t)core; hh < NHt; hh += NUM_CORES)
+          ssdn_mimo_tables(cxp, hh);
+        pi_cl_team_barrier();
+        ssdn_mimo_step1(cxp, (uint32_t)core);
+        pi_cl_team_barrier();
+        ssdn_mimo_step2(cxp, (uint32_t)core);
+      } else if (decay_mode == 1) {
         // two-scale: (1) the three shared weights once per chunk (head 0's slots) + per-head factors;
         // (2) x~ row maxima and S8 over all cores; (3) x~ quantisation over all cores
         for (uint32_t k = (uint32_t)core; k < 3 + NHt; k += NUM_CORES) {
@@ -863,8 +1203,8 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
           const uint32_t sl = hh & 1;
           const uint8_t *we = wenc + (decay_mode == 1 ? 0 : hh * WSZ);
           int32_t *a = acc + sl * ASZ;
-          ssdn_dispatch(dev, &ssdn_tasks[sl][0], xt + hh * PXA * Q, we, a);   // encoded W1 rows then W2 rows
-          ssdn_dispatch(dev, &ssdn_tasks[sl][2], su + hh * PXA * N, we + Q * Q + N * Q, a + PXA * (Q + N));
+          ssdn_dispatch(dev, &ssdn_tasks[sl][0], xt + hh * PXA * QR, we, a);   // encoded W1 rows then W2 rows
+          ssdn_dispatch(dev, &ssdn_tasks[sl][2], su + hh * PXA * N, we + QR * QR + N * QR, a + PXA * (QR + N));
         }
         SSDN_T(pb_t1);
 #if SSDN_PROFILE

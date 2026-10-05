@@ -715,6 +715,10 @@ class PULPSSDScanNE16Parser(PULPSSDScanParser):
             self.operatorRepresentation['decay_mode'] = int(node.attrs.get('decay_mode', 0))
             self.operatorRepresentation['resid_mul'] = int(node.attrs.get('resid_mul', 0))
             self.operatorRepresentation['mamba3'] = int(node.attrs.get('mamba3', 0))
+            Rk = int(node.attrs.get('mimo_rank', 1))
+            self.operatorRepresentation['mimo_rank'] = Rk
+            if 'd_inner' in self.operatorRepresentation:   # MIMO: x/z/y columns are (head, channel, rank)
+                self.operatorRepresentation['d_inner'] *= Rk
             for k in ('dta', 'R', 'm3_gamma', 'm3_w', 'm3_theta'):
                 self.operatorRepresentation[k] = 'NULL'
         return ret

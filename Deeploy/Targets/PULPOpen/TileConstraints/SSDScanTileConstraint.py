@@ -63,7 +63,7 @@ class SSDScanTileConstraint(TileConstraint):
         aHeadVar = tilerModel.getTensorDimVar(tensorName = ABuffer.name, dimIdx = 0)
         tilerModel.addConstraint(tilerModel.getTensorDimVar(tensorName = DSkipBuffer.name, dimIdx = 0) == aHeadVar)
         tilerModel.addConstraint(tilerModel.getTensorDimVar(tensorName = dtBuffer.name, dimIdx = 2) == aHeadVar)
-        tilerModel.addConstraint(xDInnerVar == aHeadVar * headDim)
+        tilerModel.addConstraint(xDInnerVar == aHeadVar * headDim * int(parseDict.get('mimo_rank', 1)))
 
         # L tiled in whole chunks only; without chunk_size the boundary is unknown, so L stays untiled.
         if 'chunk_size' in parseDict:
@@ -130,8 +130,9 @@ class SSDScanTileConstraint(TileConstraint):
         inputBaseOffsets, outputBaseOffsets = cls.extractBaseAddr(tilingSolution, targetMemLevel,
                                                                   operatorRepresentation, addrNames)
 
-        headDim = operatorRepresentation['head_dim']
-        NSize = ctxt.lookup(operatorRepresentation['B']).shape[-1]
+        Rk = int(operatorRepresentation.get('mimo_rank', 1))
+        headDim = operatorRepresentation['head_dim'] * Rk          # columns per head (MIMO: P * R)
+        NSize = ctxt.lookup(operatorRepresentation['B']).shape[-1]  # B/C row width (MIMO: N * R)
 
         replacements = {"batch_size": [], "seq_len": [], "d_state": [], "n_heads": [], "init_state": []}
 
@@ -147,7 +148,7 @@ class SSDScanTileConstraint(TileConstraint):
 
             replacements["batch_size"].append(BatchSize)
             replacements["seq_len"].append(LSize)
-            replacements["d_state"].append(NSize)
+            replacements["d_state"].append(NSize // Rk)
             replacements["n_heads"].append(HeadSize)
             replacements["init_state"].append(1 if absLOffset == 0 else 0)
 
