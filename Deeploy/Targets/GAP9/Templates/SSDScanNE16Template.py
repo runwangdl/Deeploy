@@ -90,7 +90,10 @@ class GAP9SSDScanNE16Template(NodeTemplate):
 
 referenceTemplate = GAP9SSDScanNE16Template("""
 // SSDScanNE16 (Name: ${nodeName}, Op: ${nodeOp}) -- per-head chunk products on the NE16
-memcpy(${gate_lut_l1}, ${gate_lut}, 256 * sizeof(int32_t));
+if (${init_state}) {   // the L1 copy persists over the L tiles of a head tile; split over the cores (kernel barriers first)
+    for (uint32_t _i = pi_core_id(); _i < 256; _i += NUM_CORES)
+        ((int32_t *) ${gate_lut_l1})[_i] = ((const int32_t *) ${gate_lut})[_i];
+}
 GAP9_SSDScanNE16_i8_i8(
     (const int8_t *) ${x},
     (const int8_t *) ${z},

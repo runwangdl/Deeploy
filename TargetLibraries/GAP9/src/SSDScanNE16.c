@@ -41,6 +41,7 @@
 #define SSDN_PROFILE 0
 #endif
 #if SSDN_PROFILE
+static PI_L1 uint32_t ssdn_p1[3];
 #define SSDN_T(var) uint32_t var = pi_perf_read(PI_PERF_CYCLES)
 #else
 #define SSDN_T(var)
@@ -219,6 +220,10 @@ static const int16_t ssdn_rot_q[65] = {  // = ssd_ne16_ref.ROT_SIN[0..64]
     24279, 24812, 25330, 25833, 26320, 26791, 27246, 27684, 28106, 28511, 28899, 29269, 29622, 29957, 30274, 30572,
     30853, 31114, 31357, 31581, 31786, 31972, 32138, 32286, 32413, 32522, 32610, 32679, 32729, 32758, 32767};
 static void ssdn_rot_init(void) {  // sin over [0, 2pi) from the quarter-wave table (exact copies of the reference values)
+  static uint8_t done;
+  if (done)
+    return;
+  done = 1;
   for (int i = 0; i < 256; i++) {
     const int q = i >> 6, r = i & 63;
     const int sv = (q == 0) ? ssdn_rot_q[r] : (q == 1) ? ssdn_rot_q[64 - r] : (q == 2) ? -ssdn_rot_q[r] : -ssdn_rot_q[64 - r];
@@ -765,6 +770,17 @@ static inline uint32_t ssdn_isqrt64(uint64_t x) {
   return (uint32_t)r;
 }
 
+static inline uint32_t ssdn_isqrt32(uint32_t x) {
+  uint32_t r = 0, bit = 1u << 30;
+  while (bit > x)
+    bit >>= 2;
+  while (bit) {
+    if (x >= r + bit) { x -= r + bit; r = (r >> 1) + bit; } else { r >>= 1; }
+    bit >>= 2;
+  }
+  return r;
+}
+
 static __attribute__((noinline)) void ssdn_bcn_stepa(const ssdn_ctx_t *cx, uint32_t core) {
   const uint32_t Q = cx->Q, N = cx->N, R = cx->Rk, NR = N * R;
   for (uint32_t u = core; u < 2 * Q * R; u += NUM_CORES) {
@@ -772,15 +788,16 @@ static __attribute__((noinline)) void ssdn_bcn_stepa(const ssdn_ctx_t *cx, uint3
     const int8_t *v = (which ? cx->Cp8 : cx->Bp8) + t * NR + r;
     const int32_t *W = (which ? cx->Cw : cx->Bw) + r;
     int32_t *o = cx->bn + which * Q * NR + t * NR + r;
-    uint64_t ss = 0;
+    uint32_t ss = 0;   // <= N * 2^14
     for (uint32_t n = 0; n < N; n++)
-      ss += (uint64_t)((int32_t)v[n * R] * (int32_t)v[n * R]);
-    uint32_t rt = ssdn_isqrt64((ss << 16) / N);
+      ss += (uint32_t)((int32_t)v[n * R] * (int32_t)v[n * R]);
+    // (ss << 16) / N <= 2^30: a 32-bit shift for power-of-two N
+    uint32_t rt = (N & (N - 1)) == 0 ? ssdn_isqrt32(ss << (16 - __builtin_ctz(N))) : ssdn_isqrt64(((uint64_t)ss << 16) / N);
     if (rt < 1)
       rt = 1;
     const int64_t inv = ((int64_t)1 << 38) / rt;
     for (uint32_t n = 0; n < N; n++) {
-      const int64_t tv = (int64_t)v[n * R] * (int64_t)W[n * R] * inv;
+      const int64_t tv = (int64_t)((int32_t)v[n * R] * W[n * R]) * inv;   // |v * W| < 2^25
       o[n * R] = (int32_t)(tv >= 0 ? (tv + ((int64_t)1 << 29)) >> 30 : -(((-tv) + ((int64_t)1 << 29)) >> 30));
     }
   }
@@ -852,6 +869,7 @@ static __attribute__((noinline)) void ssdn_epi_mimo_out32(const ssdn_ctx_t *cx, 
   const int l3 = e3 > 0 ? e3 : 0, r3 = e3 < 0 ? -e3 : 0;
   const int64_t D_h = (int64_t)cx->D_skip[hp];
   const int osh = (int)cx->out_shift;
+  // (32-bit fast paths with 64-bit fallbacks were not faster: 6.36 M vs 6.27 M on b0f.ssd)
   for (uint32_t t = e0 / P; t < Q && t * P < e1; t++) {
     const uint32_t cb = t * P < e0 ? e0 - t * P : 0, ce = (t + 1) * P > e1 ? e1 - t * P : P;
     const uint32_t row = (b * L + t0 + t) * d_inner + hp * P * R;
@@ -1127,6 +1145,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
                             const int32_t *__restrict__ bc_Bw, const int32_t *__restrict__ bc_Cw,
                             const int32_t *__restrict__ bc_Bb, const int32_t *__restrict__ bc_Cb, uint32_t bc_norm) {
   const int core = (int)pi_core_id();
+  pi_cl_team_barrier();   // the template's gate LUT copy (split over the cores) is complete
   const uint32_t Rk = mimo_rank ? mimo_rank : 1;   // Mamba-3 MIMO rank: the token axis becomes (token, rank) pairs
   const uint32_t QR = Q * Rk;
   const uint32_t PXA = GH * GW;
@@ -1159,11 +1178,14 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   int32_t *Gph = G;
 
   const ne16_dev_t *dev = ne16_pulp_get_dev();
-  if (core == 0) {
+  static uint32_t ssdn_task_key;   // the task descriptors depend only on (QR, N, GH, GW): set up once per shape
+  const uint32_t tkey = (QR << 24) | (N << 16) | (GH << 8) | GW;
+  if (core == 0 && ssdn_task_key != tkey) {
     for (uint32_t s = 0; s < SSDN_SLOTS; s++) {
       ssdn_task_setup(&ssdn_tasks[s][0], QR, QR + N, GH, GW);  // J1 | J2: same input, W1 and W2 stacked on Ko
       ssdn_task_setup(&ssdn_tasks[s][2], N, QR, GH, GW);
     }
+    ssdn_task_key = tkey;
   }
 
   if (epilogue_version == 2) {
@@ -1243,7 +1265,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
 
   const int number_of_chunks = (int)(L / Q);
 #if SSDN_PROFILE
-  uint32_t prof_G = 0, prof_A = 0, prof_B = 0, pb_disp = 0, pb_res = 0, pb_epi = 0, pb_upd = 0, pb_bar = 0;
+  uint32_t prof_N = 0, prof_G = 0, prof_A = 0, prof_B = 0, pb_disp = 0, pb_res = 0, pb_epi = 0, pb_upd = 0, pb_bar = 0;
   if (core == 0 || core == 1) { pi_perf_conf(1 << PI_PERF_CYCLES); pi_perf_reset(); pi_perf_start(); }
   SSDN_T(prof_t0);
 #endif
@@ -1305,6 +1327,9 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
       // ---- phase A: 4 items per head over the cores ----
       // part-major, heaviest part first (3: state quant + x transpose, 1: W2, 2: W3, 0: W1), round-robin over the
       // cores: head-major order gave every core the same part, so cores 3 and 7 did all the heavy items
+#if SSDN_PROFILE
+      const uint32_t pn0 = pi_perf_read(PI_PERF_CYCLES);
+#endif
       if (bc_norm) {   // B/C norm, per-head bias + RoPE rows, per-head G
         ssdn_bcn_stepa(cxp, (uint32_t)core);
         pi_cl_team_barrier();
@@ -1313,6 +1338,9 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
         ssdn_bcn_stepc(cxp, (uint32_t)core);
         pi_cl_team_barrier();
       }
+#if SSDN_PROFILE
+      prof_N += pi_perf_read(PI_PERF_CYCLES) - pn0;
+#endif
       if (Rk > 1) {
         // MIMO: tables per head; row maxima + data over all cores; quantise + repack rows over all cores
         for (uint32_t hh = (uint32_t)core; hh < NHt; hh += NUM_CORES)
@@ -1387,10 +1415,16 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   }
   pi_cl_team_barrier();
 #if SSDN_PROFILE
-  if (core == 0) printf("SSDN_PROF NHt=%u L=%u G=%u A=%u B=%u total=%u core0: dispatch=%u resolve_wait=%u\n", NHt, L, prof_G, prof_A, prof_B, pi_perf_read(PI_PERF_CYCLES) - prof_t0, pb_disp, pb_res);
+  static PI_L1 uint32_t ssdn_ncall;
+  if (core == 0) ssdn_ncall++;
+  pi_cl_team_barrier();
+  if (ssdn_ncall != 25) return;
+  if (core == 0) printf("SSDN_PROF N=%u NHt=%u L=%u G=%u A=%u B=%u total=%u entry=%u core0: dispatch=%u resolve_wait=%u\n", prof_N, NHt, L, prof_G, prof_A, prof_B, pi_perf_read(PI_PERF_CYCLES) - prof_t0, prof_t0, pb_disp, pb_res);
   pi_cl_team_barrier();
   if (core == 1) { (void)pb_epi; (void)pb_upd; }
-  if (core == 1) printf("SSDN_PROF core1: epilogue=%u state_update=%u barrier_wait=%u\n", ssdn_p_epi, ssdn_p_upd, pb_bar);
+  if (core == 1) { ssdn_p1[0] = ssdn_p_epi; ssdn_p1[1] = ssdn_p_upd; ssdn_p1[2] = pb_bar; }
+  pi_cl_team_barrier();
+  if (core == 0) printf("SSDN_PROF core1: epilogue=%u state_update=%u barrier_wait=%u\n", ssdn_p1[0], ssdn_p1[1], ssdn_p1[2]);
 #endif
 }
 
