@@ -846,12 +846,22 @@ static __attribute__((noinline)) void sstat_epilogue(const int32_t *acc, const i
   const uint32_t tot = npx * L, ch = (tot + NUM_CORES - 1) / NUM_CORES;
   const uint32_t i0 = core * ch < tot ? core * ch : tot, i1 = i0 + ch < tot ? i0 + ch : tot;
   const int64_t D64 = (int64_t)Dq;
+  if (i0 >= i1)
+    return;
+  // walk (pixel cl, token t) with counters: no per-element division
+  uint32_t cl = i0 / L, t = i0 - cl * L;
+  uint32_t idx = t * d_inner + col0 + cl;
   for (uint32_t i = i0; i < i1; i++) {
-    const uint32_t cl = i / L, t = i - cl * L;
-    const uint32_t idx = t * d_inner + col0 + cl;
     const int64_t y_acc = (int64_t)(acc[i] - comp[t]) * (int64_t)M[t] + D64 * (int64_t)x[idx];
     const int64_t y_g = ssdn_round_shift(y_acc * (int64_t)gate_lut[(int32_t)z[idx] + 128], 13);
     y[idx] = ssdn_sat_i32(osh > 0 ? ssdn_round_shift(y_g, osh) : y_g);
+    if (++t == L) {
+      t = 0;
+      cl++;
+      idx = col0 + cl;
+    } else {
+      idx += d_inner;
+    }
   }
 }
 
