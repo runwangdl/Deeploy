@@ -43,6 +43,18 @@ class SSDScanNE16TileConstraint(SSDScanTileConstraint):
             tilerModel.addConstraint(
                 tilerModel.getTensorDimVar(tensorName = RBuffer.name, dimIdx = 2) == tilerModel.getTensorDimVar(
                     tensorName = ABuffer.name, dimIdx = 0))
+        if int(parseDict.get('bc_norm', 0)) == 1:
+            # trained Mamba-3: Bw, Cw [N*R] whole; Bb, Cb [H, N*R] follow the heads
+            ABuffer = ctxt.lookup(name = parseDict["A"])
+            for k in ('bc_Bw', 'bc_Cw', 'bc_Bb', 'bc_Cb'):
+                buf = ctxt.lookup(name = parseDict[k])
+                tilerModel.addTensorDimToModel(ctxt, buf.name)
+                tilerModel.addConstraint(
+                    tilerModel.getTensorDimVar(tensorName = buf.name, dimIdx = len(buf.shape) - 1) == buf.shape[-1])
+                if len(buf.shape) == 2:
+                    tilerModel.addConstraint(
+                        tilerModel.getTensorDimVar(tensorName = buf.name, dimIdx = 0) == tilerModel.getTensorDimVar(
+                            tensorName = ABuffer.name, dimIdx = 0))
         if int(parseDict.get('mamba3', 0)) == 1:
             # gamma, w, theta [B,L,H] tile exactly like dt
             dtBuffer = ctxt.lookup(name = parseDict["dt"])
@@ -74,6 +86,8 @@ class SSDScanNE16TileConstraint(SSDScanTileConstraint):
         nHeads = ABuffer.shape[0]
         aHeadVar = tilerModel.getTensorDimVar(tensorName = ABuffer.name, dimIdx = 0)
         headTile = min(nHeads, SSDScanNE16TileConstraint.HEAD_TILE_MAX)
+        if int(parseDict.get('bc_norm', 0)) == 1:
+            headTile = 1   # trained Mamba-3 (rank 2, int32 out): one head per tile fits L1 (scratch sized for one slot)
         tilerModel.addConstraint(aHeadVar <= headTile)
         tilerModel.addConstraint(aHeadVar >= headTile, strategy = PerformanceHint(priority = 2))
 
@@ -97,6 +111,17 @@ class SSDScanNE16TileConstraint(SSDScanTileConstraint):
         reordered = [absoluteOutputCubes[i] for i in order]
         varRep, schedule = super(SSDScanNE16TileConstraint, cls).serializeTilingSolution(
             tilingSolution, reordered, targetMemLevel, ctxt, operatorRepresentation)
+        if int(operatorRepresentation.get('bc_norm', 0)) == 1:
+            bkeys = ['bc_Bw', 'bc_Cw', 'bc_Bb', 'bc_Cb']
+            inBase, _ = cls.extractBaseAddr(tilingSolution, targetMemLevel, operatorRepresentation, bkeys)
+            schedule.inputBaseOffsets.update(inBase)
+            hd = operatorRepresentation['head_dim'] * int(operatorRepresentation.get('mimo_rank', 1))
+            for sched, cube in zip(schedule.inputLoadSchedule, [c.rectangle for c in reordered]):
+                h0, nh = cube.offset[2] // hd, cube.dims[2] // hd
+                for k in bkeys:
+                    buf = ctxt.lookup(operatorRepresentation[k])
+                    sched[k] = HyperRectangle((0,), (buf.shape[0],)) if len(buf.shape) == 1 else \
+                        HyperRectangle((h0, 0), (nh, buf.shape[1]))
         if int(operatorRepresentation.get('mamba3', 0)) == 1:
             m3keys = [k for k in ('m3_gamma', 'm3_w', 'm3_theta') if operatorRepresentation.get(k, 'NULL') != 'NULL']
             inBase, _ = cls.extractBaseAddr(tilingSolution, targetMemLevel, operatorRepresentation, m3keys)

@@ -699,14 +699,17 @@ class PULPSSDScanNE16Parser(PULPSSDScanParser):
 
     def _expectedInputs(self, node: gs.Node) -> int:
         if int(node.attrs.get('mamba3', 0)) == 1:
-            return 10 if int(node.attrs.get('mamba3_rope', 1)) == 1 else 9   # theta only with RoPE
+            n = 10 if int(node.attrs.get('mamba3_rope', 1)) == 1 else 9      # theta only with RoPE
+            return n + (4 if int(node.attrs.get('bc_norm', 0)) == 1 else 0)  # trained Mamba-3: + Bw, Cw, Bb, Cb
         return 9 if int(node.attrs.get('decay_mode', 0)) == 1 else 7
 
     def _inputNames(self, node: gs.Node) -> List[str]:
         base = ['x', 'z', 'dt', 'B', 'C', 'A', 'D_skip']
         if int(node.attrs.get('mamba3', 0)) == 1:
             m3 = ['m3_gamma', 'm3_w'] + (['m3_theta'] if int(node.attrs.get('mamba3_rope', 1)) == 1 else [])
-            return base + m3                                    # Mamba-3 rank 1
+            if int(node.attrs.get('bc_norm', 0)) == 1:
+                m3 += ['bc_Bw', 'bc_Cw', 'bc_Bb', 'bc_Cb']
+            return base + m3                                    # Mamba-3
         return base + ['dta', 'R']                          # two-scale decay (decay_mode 1)
 
     def parseNode(self, node: gs.Node) -> bool:
@@ -719,7 +722,8 @@ class PULPSSDScanNE16Parser(PULPSSDScanParser):
             self.operatorRepresentation['mimo_rank'] = Rk
             if 'd_inner' in self.operatorRepresentation:   # MIMO: x/z/y columns are (head, channel, rank)
                 self.operatorRepresentation['d_inner'] *= Rk
-            for k in ('dta', 'R', 'm3_gamma', 'm3_w', 'm3_theta'):
+            self.operatorRepresentation['bc_norm'] = int(node.attrs.get('bc_norm', 0))
+            for k in ('dta', 'R', 'm3_gamma', 'm3_w', 'm3_theta', 'bc_Bw', 'bc_Cw', 'bc_Bb', 'bc_Cb'):
                 self.operatorRepresentation[k] = 'NULL'
         return ret
 
@@ -893,4 +897,26 @@ class PULPStaticScanNE16Parser(NodeParser):
             ctxt.annotateType(lut_name, PointerClass(int32_t))
             buf._memoryLevel = "L2"
         self.operatorRepresentation['gate_lut'] = lut_name
+        return ctxt, True
+
+
+class PULPM3GatesParser(NodeParser):
+    """M3Gates (trained Mamba-3): inputs dt int16 [B,L,H], raw int8 [B,L,H], lut int16 [256]; output int16 [B,L,H];
+    attr which (0 gamma, 1 w, 2 theta). Kernel GAP9_M3Gates (TargetLibraries/GAP9/src/M3Gates.c)."""
+
+    def __init__(self):
+        super().__init__()
+
+    def parseNode(self, node: gs.Node) -> bool:
+        ret = node.op == 'M3Gates' and len(node.inputs) == 3 and len(node.outputs) == 1
+        if ret:
+            self.operatorRepresentation['which'] = int(node.attrs['which'])
+        return ret
+
+    def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node, channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        for idx, name in enumerate(['dt', 'raw', 'lut']):
+            self.operatorRepresentation[name] = ctxt.lookup(node.inputs[idx].name).name
+        self.operatorRepresentation['out'] = ctxt.lookup(node.outputs[0].name).name
+        shape = list(ctxt.lookup(node.inputs[1].name).shape)
+        self.operatorRepresentation['B'], self.operatorRepresentation['L'], self.operatorRepresentation['H'] = shape
         return ctxt, True

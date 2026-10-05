@@ -38,6 +38,7 @@ from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPProfileUntiled import
 from Deeploy.Targets.PULPOpen.DataTypes import PULPDMAFuture
 from Deeploy.Targets.PULPOpen.Templates import RMSNormI32Template
 from Deeploy.Targets.GAP9.Templates import StaticScanNE16Template
+from Deeploy.Targets.GAP9.Templates import M3GatesTemplate
 from Deeploy.Targets.GAP9.Templates import Mamba3ScanTemplate, SelectiveScanI16Template, SelectiveScanTemplate, SSDScanNE16Template, SSDScanTemplate
 from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, FloatAddTemplate, FloatConvTemplate, \
     IntAddTemplate, \
@@ -50,7 +51,7 @@ from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, F
     TransposeTemplate, UniformRequantShiftTemplate, iRMSNormTemplate, iSoftmaxTemplate, iLayernormTemplate, \
     QuantTemplate, DequantTemplate
 from Deeploy.Targets.PULPOpen.TypeCheckers import PULPConvChecker, PULPLinearChecker, PULPMaxPoolChecker, \
-    PULPMamba3ScanChecker, PULPRMSNormI32Checker, PULPStaticScanChecker, PULPRequantShiftChecker, PULPSelectiveScanChecker, PULPSelectiveScanI16Checker, PULPSoftplusChecker, PULPSSDScanChecker
+    PULPMamba3ScanChecker, PULPRMSNormI32Checker, PULPStaticScanChecker, PULPM3GatesChecker, PULPRequantShiftChecker, PULPSelectiveScanChecker, PULPSelectiveScanI16Checker, PULPSoftplusChecker, PULPSSDScanChecker
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingVariableReplacement import TilingVariableReplacement, \
     TilingVariableReplacementUpdate
 
@@ -444,6 +445,11 @@ GAP9iRMSNormBindings = [
                 iRMSNormTemplate.referenceTemplate, GAP9Transformer)
 ]
 
+GAP9M3GatesBindings = [
+    NodeBinding(PULPM3GatesChecker([PointerClass(int16_t), PointerClass(r_t), PointerClass(int16_t)], [PointerClass(int16_t)]),
+                M3GatesTemplate.referenceTemplate, GAP9Transformer) for r_t in (int8_t, uint8_t)
+]
+
 GAP9StaticScanNE16Bindings = [
     NodeBinding(
         PULPStaticScanChecker([PointerClass(int8_t), PointerClass(int8_t), PointerClass(uint8_t), PointerClass(int32_t),
@@ -613,6 +619,25 @@ GAP9SSDScanNE16Bindings = [
             PointerClass(int16_t),
             PointerClass(int16_t)
         ], [PointerClass(out_t)]), SSDScanNE16Template.referenceTemplate, GAP9Transformer) for out_t in (int8_t, int32_t)
+] + [
+    # trained Mamba-3: int8 B/C projections (normalised in the kernel), + gamma, w, theta, Bw, Cw, Bb, Cb; int32 out
+    NodeBinding(
+        PULPSSDScanChecker([
+            PointerClass(int8_t),
+            PointerClass(int8_t),
+            PointerClass(int16_t),
+            PointerClass(int8_t),
+            PointerClass(int8_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int16_t),
+            PointerClass(int16_t),
+            PointerClass(int16_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t),
+            PointerClass(int32_t)
+        ], [PointerClass(int32_t)]), SSDScanNE16Template.referenceTemplate, GAP9Transformer)
 ] + [
     # Mamba-3 rank 1 without RoPE: + gamma, w only
     NodeBinding(

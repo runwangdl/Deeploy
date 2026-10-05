@@ -168,3 +168,9 @@ class PULPStaticScanLayer(ONNXLayer):
         rep = self.mapper.parser.operatorRepresentation
         L, P, H = rep['seq_len'], rep['head_dim'], rep['n_heads']
         return 2 * H * P * (L * (L + 1) // 2) + 6 * H * P * L
+
+
+class PULPM3GatesLayer(ONNXLayer):
+
+    def __init__(self, maps: List[NodeMapper]):
+        super().__init__(maps)

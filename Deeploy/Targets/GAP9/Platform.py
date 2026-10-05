@@ -39,7 +39,7 @@ from Deeploy.Targets.GAP9.Tiler import GAP9AddTilingReadyBindings, GAP9ConcatTil
     GAP9RQSiHardswishTilingReadyBindings, \
     GAP9RQSMatrixVecTilingReadyBindings, GAP9RQSTallGEMMTilingReadyBindings, GAP9RQSTilingReadyBindings, \
     GAP9UniformRQS_s32TilingReadyBindings, \
-    GAP9SelectiveScanTilingReadyBindings, GAP9SelectiveScanI16TilingReadyBindings, GAP9SSDScanTilingReadyBindings, GAP9SSDScanNE16TilingReadyBindings, GAP9Mamba3ScanTilingReadyBindings, GAP9StaticScanNE16TilingReadyBindings, \
+    GAP9SelectiveScanTilingReadyBindings, GAP9SelectiveScanI16TilingReadyBindings, GAP9SSDScanTilingReadyBindings, GAP9SSDScanNE16TilingReadyBindings, GAP9Mamba3ScanTilingReadyBindings, GAP9StaticScanNE16TilingReadyBindings, GAP9M3GatesTilingReadyBindings, \
     GAP9SGDTilingReadyBindings, \
     GAP9SILUTilingReadyBindings, GAP9SoftmaxCrossEntropyGradTilingReadyBindings, \
     GAP9SoftmaxCrossEntropyTilingReadyBindings, GAP9SoftmaxGradTilingReadyBindings, GAP9SoftmaxTilingReadyBindings, \
@@ -75,10 +75,10 @@ from Deeploy.Targets.PULPOpen.TopologyOptimizationPasses.Passes import PULPAddRe
 from Deeploy.Targets.PULPOpen.Bindings import BasicDequantBindings, BasicQuantBindings, PULPDMASliceBindings, \
     PULPRQSConv1DBindings, PULPSliceBindings
 from Deeploy.Targets.PULPOpen.Layers import PULPRQSConvLayer, PULPRQSGEMMLayer, PULPSelectiveScanI16Layer, PULPSelectiveScanLayer, \
-    PULPSoftplusLayer, PULPSSDScanLayer, PULPSSDScanNE16Layer, PULPMamba3ScanLayer, PULPStaticScanLayer
+    PULPSoftplusLayer, PULPSSDScanLayer, PULPSSDScanNE16Layer, PULPMamba3ScanLayer, PULPStaticScanLayer, PULPM3GatesLayer
 from Deeploy.Targets.PULPOpen.Parsers import PULPConv1DParser, PULPConv2DParser, PULPDWConv1DParser, \
     PULPDWConv2DParser, PULPFPConv2DParser, PULPFPDWConv2DParser, PULPGEMMParser, PULPMatrixVecParser, \
-    PULPReduceMeanParser, PULPSelectiveScanI16Parser, PULPSelectiveScanParser, PULPSoftplusParser, PULPSSDScanParser, PULPSSDScanNE16Parser, PULPRMSNormI32Parser, PULPStaticScanNE16Parser, PULPMamba3ScanParser, PULPTallGEMMParser
+    PULPReduceMeanParser, PULPSelectiveScanI16Parser, PULPSelectiveScanParser, PULPSoftplusParser, PULPSSDScanParser, PULPSSDScanNE16Parser, PULPRMSNormI32Parser, PULPStaticScanNE16Parser, PULPM3GatesParser, PULPMamba3ScanParser, PULPTallGEMMParser
 
 # Create GAP9-specific NodeMappers
 GAP9_RQAddMapper = NodeMapper(RQAddParser(), GAP9RQAddTilingReadyBindings)
@@ -141,6 +141,7 @@ GAP9_SelectiveScanI16Mapper = NodeMapper(PULPSelectiveScanI16Parser(), GAP9Selec
 GAP9_SSDScanMapper = NodeMapper(PULPSSDScanParser(), GAP9SSDScanTilingReadyBindings)
 GAP9_SSDScanNE16Mapper = NodeMapper(PULPSSDScanNE16Parser(), GAP9SSDScanNE16TilingReadyBindings)
 GAP9_StaticScanNE16Mapper = NodeMapper(PULPStaticScanNE16Parser(), GAP9StaticScanNE16TilingReadyBindings)
+GAP9_M3GatesMapper = NodeMapper(PULPM3GatesParser(), GAP9M3GatesTilingReadyBindings)
 GAP9_Mamba3ScanMapper = NodeMapper(PULPMamba3ScanParser(), GAP9Mamba3ScanTilingReadyBindings)
 GAP9_SoftplusMapper = NodeMapper(PULPSoftplusParser(), GAP9SoftplusTilingReadyBindings)
 GAP9_iLayerNormMapper = NodeMapper(iLayerNormParser(), GAP9iLayernormTilingReadyBindings)
@@ -277,6 +278,8 @@ GAP9Mapping = {
         PULPSSDScanLayer([GAP9_SSDScanMapper]),
     'RMSNormI32':
         iRMSNormLayer([GAP9_RMSNormI32Mapper]),
+    'M3Gates':
+        PULPM3GatesLayer([GAP9_M3GatesMapper]),
     'StaticScan_NE16':
         PULPStaticScanLayer([GAP9_StaticScanNE16Mapper]),
     'SSD_Scan_NE16':

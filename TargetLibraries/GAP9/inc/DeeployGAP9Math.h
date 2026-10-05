@@ -35,5 +35,6 @@
 #include "SelectiveScan.h"
 #include "SSDScan.h"
 #include "SSDScanNE16.h"
+#include "M3Gates.h"
 
 #endif // __DEEPLOY_GAP9_MATH_HEADER_

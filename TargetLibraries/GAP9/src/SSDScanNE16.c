@@ -204,6 +204,9 @@ typedef struct {
   const int16_t *m3g, *m3w, *m3th; int32_t *rot, *thstate; uint32_t m3;          // Mamba-3 rank 1 (gamma, w, theta)
   uint32_t Rk;                                                                    // Mamba-3 MIMO rank (1 otherwise)
   int32_t *mtab;   // MIMO: per head [Q*Q e_ts | Q e_Qs | Q e_t0 | QR + N + QR row maxima]
+  // trained Mamba-3 (bc_norm): int8 B/C projections, RMS-normalised per (token, rank) with Bw/Cw, + per-head Bb/Cb,
+  // rotated per head; per-head rows (rotm [NHt][2][Q][N*R]) and per-head G (Gph [NHt][QR][QR])
+  const int8_t *Bp8, *Cp8; const int32_t *Bw, *Cw, *Bb, *Cb; int32_t *bn, *rotm, *Gph; uint32_t bcn;
 } ssdn_ctx_t;
 // one shared context in L1 (same values on every core; core 0 writes it, the following barriers order the reads)
 static PI_L1 ssdn_ctx_t ssdn_cx;
@@ -651,7 +654,7 @@ static inline uint32_t ssdn_mimo_rowvals(const ssdn_ctx_t *cx, uint32_t hh, uint
   uint32_t i = 0;
   if (mat == 0) {
     const uint32_t t = ko / R;
-    const int32_t *Grow = cx->G + ko * QR;
+    const int32_t *Grow = (cx->Gph ? cx->Gph + hh * QR * QR : cx->G) + ko * QR;
     for (uint32_t s_ = 0; s_ < Q; s_++) {
       const int32_t e = ets[t * Q + s_];
       const int64_t k = (s_ == t) ? (int64_t)kg[t * NHt] : (int64_t)kw[s_ * NHt];
@@ -661,13 +664,13 @@ static inline uint32_t ssdn_mimo_rowvals(const ssdn_ctx_t *cx, uint32_t hh, uint
   } else if (mat == 1) {
     for (uint32_t s_ = 0; s_ < Q; s_++) {
       const int64_t k = (int64_t)kw[s_ * NHt];
-      const int32_t *Br = cx->Bk + s_ * NR + ko * R;
+      const int32_t *Br = (cx->rotm ? cx->rotm + hh * 2 * Q * NR : cx->Bk) + s_ * NR + ko * R;
       for (uint32_t r = 0; r < R; r++, i++)
         v[i] = (int32_t)(((int64_t)(int32_t)((k * (int64_t)Br[r]) >> 8) * eQs[s_]) >> 15);
     }
   } else {
     const uint32_t t = ko / R, q = ko - t * R;
-    const int32_t *Cr = cx->Ck + t * NR + q;
+    const int32_t *Cr = (cx->rotm ? cx->rotm + hh * 2 * Q * NR + Q * NR : cx->Ck) + t * NR + q;
     for (uint32_t n = 0; n < N; n++, i++)
       v[i] = (int32_t)(((int64_t)Cr[n * R] * et0[t]) >> 15);
   }
@@ -743,6 +746,125 @@ static __attribute__((noinline)) void ssdn_mimo_step2(const ssdn_ctx_t *cx, uint
     if (mat == 2 && ko == 0) {
       const int32_t *et0 = cx->mtab + hh * TS + Q * Q + Q;
       mt[4] = et0[Q - 1];
+    }
+  }
+}
+
+// ---- trained Mamba-3 (bc_norm) preparation, per chunk, over all cores (m3_ref.bc_norm + per-head bias + RoPE):
+// step a: Bn/Cn rows (token, rank): rt = isqrt((sum_n v^2 << 16) / N) (rms * 2^8), inv = 2^38 / rt,
+//         out = rs(v * W[n,r] * inv, 30) (2^-10 units);  step b: per (head, token) rows + bias, rotated by the head's
+//         accumulated angle;  step c: per-head G rows (t,q) and the carried angle.
+static inline uint32_t ssdn_isqrt64(uint64_t x) {
+  uint64_t r = 0, bit = (uint64_t)1 << 62;
+  while (bit > x)
+    bit >>= 2;
+  while (bit) {
+    if (x >= r + bit) { x -= r + bit; r = (r >> 1) + bit; } else { r >>= 1; }
+    bit >>= 2;
+  }
+  return (uint32_t)r;
+}
+
+static __attribute__((noinline)) void ssdn_bcn_stepa(const ssdn_ctx_t *cx, uint32_t core) {
+  const uint32_t Q = cx->Q, N = cx->N, R = cx->Rk, NR = N * R;
+  for (uint32_t u = core; u < 2 * Q * R; u += NUM_CORES) {
+    const uint32_t which = u / (Q * R), tr = u - which * Q * R, t = tr / R, r = tr - t * R;
+    const int8_t *v = (which ? cx->Cp8 : cx->Bp8) + t * NR + r;
+    const int32_t *W = (which ? cx->Cw : cx->Bw) + r;
+    int32_t *o = cx->bn + which * Q * NR + t * NR + r;
+    uint64_t ss = 0;
+    for (uint32_t n = 0; n < N; n++)
+      ss += (uint64_t)((int32_t)v[n * R] * (int32_t)v[n * R]);
+    uint32_t rt = ssdn_isqrt64((ss << 16) / N);
+    if (rt < 1)
+      rt = 1;
+    const int64_t inv = ((int64_t)1 << 38) / rt;
+    for (uint32_t n = 0; n < N; n++) {
+      const int64_t tv = (int64_t)v[n * R] * (int64_t)W[n * R] * inv;
+      o[n * R] = (int32_t)(tv >= 0 ? (tv + ((int64_t)1 << 29)) >> 30 : -(((-tv) + ((int64_t)1 << 29)) >> 30));
+    }
+  }
+}
+
+static __attribute__((noinline)) void ssdn_bcn_stepb(const ssdn_ctx_t *cx, uint32_t core) {
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, NHt = cx->NHt, Q = cx->Q, N = cx->N, R = cx->Rk, NR = N * R;
+  for (uint32_t u = core; u < NHt * Q; u += NUM_CORES) {
+    const uint32_t hh = u / Q, t = u - hh * Q;
+    int32_t th = cx->thstate[b * NHt + hh];
+    if (cx->m3th)
+      for (uint32_t k = 0; k <= t; k++)
+        th += (int32_t)cx->m3th[(b * L + t0 + k) * NHt + hh];
+    const uint32_t idx = ((uint32_t)th >> 8) & 255u;
+    const int64_t c = cx->m3th ? ssdn_rot_cos[idx] : 32767, sn = cx->m3th ? ssdn_rot_sin[idx] : 0;
+    for (uint32_t which = 0; which < 2; which++) {
+      const int32_t *src = cx->bn + which * Q * NR + t * NR, *bias = (which ? cx->Cb : cx->Bb) + hh * NR;
+      int32_t *dst = cx->rotm + hh * 2 * Q * NR + which * Q * NR + t * NR;
+      if (!cx->m3th) {
+        for (uint32_t k = 0; k < NR; k++)
+          dst[k] = src[k] + bias[k];
+        continue;
+      }
+      for (uint32_t r = 0; r < R; r++)
+        for (uint32_t n = 0; n + 1 < N; n += 2) {
+          const int64_t e = src[n * R + r] + bias[n * R + r], o = src[(n + 1) * R + r] + bias[(n + 1) * R + r];
+          dst[n * R + r] = (int32_t)((c * e + sn * o) >> 15);
+          dst[(n + 1) * R + r] = (int32_t)((-sn * e + c * o) >> 15);
+        }
+    }
+  }
+}
+
+static __attribute__((noinline)) void ssdn_bcn_stepc(const ssdn_ctx_t *cx, uint32_t core) {
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, NHt = cx->NHt, Q = cx->Q, N = cx->N, R = cx->Rk;
+  const uint32_t NR = N * R, QR = Q * R;
+  for (uint32_t u = core; u < NHt * QR; u += NUM_CORES) {
+    const uint32_t hh = u / QR, row = u - hh * QR, t = row / R, q = row - t * R;
+    const int32_t *Cr = cx->rotm + hh * 2 * Q * NR + Q * NR + t * NR + q;
+    int32_t *Gr = cx->Gph + hh * QR * QR + row * QR;
+    for (uint32_t s_ = 0; s_ <= t; s_++)
+      for (uint32_t r = 0; r < R; r++) {
+        const int32_t *Br = cx->rotm + hh * 2 * Q * NR + s_ * NR + r;
+        int64_t d = 0;
+        for (uint32_t n = 0; n < N; n++)
+          d += (int64_t)Cr[n * R] * (int64_t)Br[n * R];
+        Gr[s_ * R + r] = (int32_t)(d >> 15);
+      }
+  }
+  if (core == 0 && cx->m3th)   // carry the angle (everybody has read it in step b)
+    for (uint32_t hh = 0; hh < NHt; hh++) {
+      int32_t th = cx->thstate[b * NHt + hh];
+      for (uint32_t k = 0; k < Q; k++)
+        th += (int32_t)cx->m3th[(b * L + t0 + k) * NHt + hh];
+      cx->thstate[b * NHt + hh] = th;
+    }
+}
+
+// MIMO epilogue, int32 output (trained Mamba-3 -> RMSNormI32): y = sat32(rs(rs(y_acc * gate, 13), out_shift))
+static __attribute__((noinline)) void ssdn_epi_mimo_out32(const ssdn_ctx_t *cx, uint32_t hp, uint32_t e0, uint32_t e1) {
+  const int8_t *x = cx->x, *z = cx->z; int32_t *y32 = (int32_t *)cx->y; const int32_t *gate_lut = cx->gate_lut;
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, P = cx->P, N = cx->N, Q = cx->Q, R = cx->Rk, d_inner = cx->d_inner;
+  const uint32_t QR = Q * R;
+  const int32_t *mt = cx->meta + hp * cx->MSZ;
+  const int32_t *a1 = cx->acc + (hp & 1) * cx->ASZ, *a3 = a1 + cx->PXA * (QR + N);
+  const int32_t *comp1 = mt + SSDN_META_HDR, *comp3 = comp1 + QR + N;
+  const int sh1 = mt[0], e3 = mt[2] + mt[3] - 15;
+  const int l1 = sh1 > 0 ? sh1 : 0, r1 = sh1 < 0 ? -sh1 : 0;
+  const int l3 = e3 > 0 ? e3 : 0, r3 = e3 < 0 ? -e3 : 0;
+  const int64_t D_h = (int64_t)cx->D_skip[hp];
+  const int osh = (int)cx->out_shift;
+  for (uint32_t t = e0 / P; t < Q && t * P < e1; t++) {
+    const uint32_t cb = t * P < e0 ? e0 - t * P : 0, ce = (t + 1) * P > e1 ? e1 - t * P : P;
+    const uint32_t row = (b * L + t0 + t) * d_inner + hp * P * R;
+    for (uint32_t c = cb; c < ce; c++) {
+      const int32_t *p1 = a1 + c * (QR + N) + t * R, *p3 = a3 + c * QR + t * R;
+      for (uint32_t q = 0; q < R; q++) {
+        const uint32_t col = row + c * R + q;
+        const int64_t v1 = (int64_t)(p1[q] - comp1[t * R + q]);
+        const int64_t v3 = (int64_t)(p3[q] - comp3[t * R + q]);
+        const int64_t y_acc = ((v1 << l1) >> r1) + ((v3 << l3) >> r3) + D_h * (int64_t)x[col];
+        const int64_t y_g = ssdn_round_shift(y_acc * (int64_t)gate_lut[(int32_t)z[col] + 128], 13);
+        y32[col] = ssdn_sat_i32(osh > 0 ? ssdn_round_shift(y_g, osh) : y_g);
+      }
     }
   }
 }
@@ -950,7 +1072,9 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
   const int l2 = sh2 > 0 ? sh2 : 0, r2 = sh2 < 0 ? -sh2 : 0;
   const int64_t eQ0 = (int64_t)mt[4];
   // y epilogue: one variant per call, each in its own frame (the 1 KB slave stacks)
-  if (cx->Rk > 1)
+  if (cx->Rk > 1 && cx->out_bits == 32)
+    ssdn_epi_mimo_out32(cx, hp, e0, e1);
+  else if (cx->Rk > 1)
     ssdn_epi_mimo_v2(cx, hp, e0, e1);
   else if (epilogue_version == 2)
     ssdn_epi_v2(cx, hp, e0, e1);
@@ -999,7 +1123,9 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
                             uint32_t out_bits, uint32_t out_shift, const int16_t *__restrict__ dta,
                             const int8_t *__restrict__ R, uint32_t decay_mode, int32_t resid_mul,
                             const int16_t *__restrict__ m3_gamma, const int16_t *__restrict__ m3_w,
-                            const int16_t *__restrict__ m3_theta, uint32_t mamba3, uint32_t mimo_rank) {
+                            const int16_t *__restrict__ m3_theta, uint32_t mamba3, uint32_t mimo_rank,
+                            const int32_t *__restrict__ bc_Bw, const int32_t *__restrict__ bc_Cw,
+                            const int32_t *__restrict__ bc_Bb, const int32_t *__restrict__ bc_Cb, uint32_t bc_norm) {
   const int core = (int)pi_core_id();
   const uint32_t Rk = mimo_rank ? mimo_rank : 1;   // Mamba-3 MIMO rank: the token axis becomes (token, rank) pairs
   const uint32_t QR = Q * Rk;
@@ -1017,15 +1143,20 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   int8_t *w8 = (int8_t *)(su + NHt * PXA * N);              // [NHt][WSZ]
   uint8_t *wenc = (uint8_t *)w8 + NHt * WSZ;                // [NHt][WSZ]
   int32_t *acc = (int32_t *)(wenc + NHt * WSZ);             // [SLOTS][ASZ]
-  int32_t *meta = acc + SSDN_SLOTS * ASZ;                   // [NHt][MSZ]
-  int32_t *G = meta + NHt * MSZ;                            // [QR][QR]
-  int32_t *cscr = G + QR * QR + (uint32_t)core * (QM + Q);  // [NUM_CORES][QM + Q]: matrix scratch + lam[Q]
-  int16_t *gm16 = (int16_t *)(G + QR * QR + NUM_CORES * (QM + Q)); // [256] epilogue v2 LUT (gate * mul folded)
+  int32_t *meta = acc + (NHt > 1 ? SSDN_SLOTS : 1) * ASZ;  // [NHt][MSZ] (one head per tile: one slot)
+  int32_t *G = meta + NHt * MSZ;                            // [QR][QR] (bc_norm: [NHt][QR][QR] per-head G)
+  const uint32_t GSZ = QR * QR * (bc_norm ? NHt : 1);
+  int32_t *cscr = G + GSZ + (uint32_t)core * (QM + Q);      // [NUM_CORES][QM + Q]: matrix scratch + lam[Q]
+  int16_t *gm16 = (int16_t *)(G + GSZ + NUM_CORES * (QM + Q)); // [256] epilogue v2 LUT (gate * mul folded)
   int32_t ep2_SG = 0;
   int32_t *hmax = h_state + B_size * NHt * P * N;           // [B][NHt][NUM_CORES] per-core |state| maxima
   int32_t *thstate = hmax + B_size * NHt * NUM_CORES;       // Mamba-3: [B][NHt] accumulated RoPE angle
   int32_t *rot = (int32_t *)(gm16 + 256);                   // Mamba-3 RoPE: [NHt][2][Q][N] rotated B, C rows
-  int32_t *mtab = rot + (mamba3 && m3_theta ? NHt * 2 * Q * N : 0);   // MIMO: [NHt][ssdn_mimo_tabsz]
+  int32_t *mtab = rot + (mamba3 && m3_theta && Rk == 1 ? NHt * 2 * Q * N : 0);   // MIMO: [NHt][ssdn_mimo_tabsz]
+  // bc_norm: normalised rows [2][Q][N*R] live in the per-core scratch (idle before phase A), per-head G in G
+  int32_t *bnb = G + GSZ;
+  int32_t *rotm = mtab + (Rk > 1 ? NHt * (Q * Q + 2 * Q + 2 * QR + N) : 0);     // bc_norm: [NHt][2][Q][N*R]
+  int32_t *Gph = G;
 
   const ne16_dev_t *dev = ne16_pulp_get_dev();
   if (core == 0) {
@@ -1096,6 +1227,11 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
     cxp->m3 = mamba3;
     cxp->Rk = Rk;
     cxp->mtab = mtab;
+    cxp->bcn = bc_norm;
+    cxp->Bw = bc_Bw; cxp->Cw = bc_Cw; cxp->Bb = bc_Bb; cxp->Cb = bc_Cb;
+    cxp->bn = bc_norm ? bnb : 0;
+    cxp->rotm = bc_norm ? rotm : 0;
+    cxp->Gph = bc_norm ? Gph : 0;
     cxp->m3g = m3_gamma;
     cxp->m3w = m3_w;
     cxp->m3th = (mamba3 && m3_theta) ? m3_theta : 0;
@@ -1130,11 +1266,17 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
       const uint32_t t0 = (uint32_t)chunk * Q;
       const int32_t *Bk = B + (b * L + t0) * N * Rk; // [Q][N*R]
       const int32_t *Ck = C + (b * L + t0) * N * Rk;
-      if (core == 0) { cxp->b = b; cxp->t0 = t0; cxp->Bk = Bk; cxp->Ck = Ck; }  // read after the barrier below
+      if (core == 0) {   // read after the barrier below
+        cxp->b = b; cxp->t0 = t0; cxp->Bk = Bk; cxp->Ck = Ck;
+        cxp->Bp8 = (const int8_t *)B + (b * L + t0) * N * Rk;
+        cxp->Cp8 = (const int8_t *)C + (b * L + t0) * N * Rk;
+      }
       SSDN_T(prof_g0);
 
       // ---- shared G[t][s] = (C_t . B_s) >> 15, rows over cores (MIMO: G[(t,q)][(s,r)] over the rank pairs) ----
-      if (Rk > 1) {
+      if (bc_norm) {
+        // trained Mamba-3: per-head rows and G (steps a-c below), no shared G
+      } else if (Rk > 1) {
         for (uint32_t row = (uint32_t)core; row < QR; row += NUM_CORES) {
           const uint32_t t = row / Rk, q = row - t * Rk;
           const int32_t *Cr = Ck + t * N * Rk + q;
@@ -1163,6 +1305,14 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
       // ---- phase A: 4 items per head over the cores ----
       // part-major, heaviest part first (3: state quant + x transpose, 1: W2, 2: W3, 0: W1), round-robin over the
       // cores: head-major order gave every core the same part, so cores 3 and 7 did all the heavy items
+      if (bc_norm) {   // B/C norm, per-head bias + RoPE rows, per-head G
+        ssdn_bcn_stepa(cxp, (uint32_t)core);
+        pi_cl_team_barrier();
+        ssdn_bcn_stepb(cxp, (uint32_t)core);
+        pi_cl_team_barrier();
+        ssdn_bcn_stepc(cxp, (uint32_t)core);
+        pi_cl_team_barrier();
+      }
       if (Rk > 1) {
         // MIMO: tables per head; row maxima + data over all cores; quantise + repack rows over all cores
         for (uint32_t hh = (uint32_t)core; hh < NHt; hh += NUM_CORES)
