@@ -186,10 +186,12 @@ class _WideOutMixin:
     width matches out_bits is the one that type-checks, and the int32 output gets 2^32 levels."""
 
     def _wantWidth(self, operatorRepresentation):
-        return 8 if int(operatorRepresentation.get('out_bits', 8)) == 8 else 32
+        b = int(operatorRepresentation.get('out_bits', 8))
+        return 8 if b <= 8 else (16 if b <= 16 else 32)
 
     def _inferNumLevels(self, inputs, operatorRepresentation):
-        return [2**32] if self._wantWidth(operatorRepresentation) == 32 else [inputs[0].nLevels]
+        w = self._wantWidth(operatorRepresentation)
+        return [inputs[0].nLevels] if w == 8 else [2**w]
 
     def checkOutputType(self, inputs, operatorRepresentation) -> bool:
         return self.output_types[0].referencedType.typeWidth == self._wantWidth(operatorRepresentation)

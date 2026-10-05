@@ -40,8 +40,8 @@ static inline int32_t _i16_clip16(int32_t v) {
 }
 
 
-// store one output: out_bits 8 -> int8 Q40 requant (default); otherwise int32 tensor holding
-// sat_{out_bits}(rs(y_gated, out_shift)) (wide output for an int32 x int8 out_proj, FEMBA Mamba-2 classifier head)
+// store one output: out_bits 8 -> int8 Q40 requant (default); otherwise sat_{out_bits}(rs(y_gated, out_shift))
+// in an int16 (out_bits <= 16) or int32 tensor (wide output for an int32 x int8 out_proj, FEMBA Mamba-2 classifier head)
 static inline void _i16_store(void *y, uint32_t i, int64_t y_gated, int32_t mul_q40, uint32_t out_bits, uint32_t out_shift) {
   if (out_bits == 8) {
     int64_t v = _i16_round_shift_i64(y_gated * (int64_t)mul_q40, 40);
@@ -49,7 +49,11 @@ static inline void _i16_store(void *y, uint32_t i, int64_t y_gated, int32_t mul_
   } else {
     const int64_t lim = ((int64_t)1 << (out_bits - 1)) - 1;
     int64_t v = out_shift ? _i16_round_shift_i64(y_gated, (int)out_shift) : y_gated;
-    ((int32_t *)y)[i] = (int32_t)(v > lim ? lim : (v < -lim - 1 ? -lim - 1 : v));
+    v = v > lim ? lim : (v < -lim - 1 ? -lim - 1 : v);
+    if (out_bits <= 16)
+      ((int16_t *)y)[i] = (int16_t)v;
+    else
+      ((int32_t *)y)[i] = (int32_t)v;
   }
 }
 

@@ -162,3 +162,16 @@ PULPMM_s8_s8_s32_Parallel_Template = _MatMulTemplate("""
         ref_${data_out}_${data_out} += ${M} * ${O};
     }
 """)
+
+
+PULPMM_s16_s8_s32_Parallel_Template = _MatMulTemplate("""
+// MatMul int16 x int8 (Name: ${nodeName}, Op: ${nodeOp})
+    ${A_type.typeName} ref_${data_out}_${A} = ${A};
+    ${data_out_type.typeName} ref_${data_out}_${data_out} = ${data_out};
+
+    for(uint32_t i=0;i<${batch};i++){
+        PULP_MatMul_s16_s8_s32(ref_${data_out}_${A}, ${B}, ref_${data_out}_${data_out}, ${M}, ${N}, ${O}, ${C_offset});
+        ref_${data_out}_${A} += ${M} * ${N};
+        ref_${data_out}_${data_out} += ${M} * ${O};
+    }
+""")

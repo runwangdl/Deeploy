@@ -50,7 +50,9 @@ outSignage = "s" if signedO else "u"
 %>
 
 // RequantShift (Name: ${nodeName}, Op: ${nodeOp})
-    % if channels_first:
+    % if (not channels_first) and inSignage == "s" and outSignage == "s" and data_in_type.referencedType.typeWidth == 32 and data_out_type.referencedType.typeWidth == 8 and isinstance(log2D, int) and output_offset == 0:
+    PULP_RequantShift_s32_s8_NHWC(${data_in}, ${size}, ${mul}, ${add}, ${data_out}, ${log2D}, ${channels}, ${output_min}, ${output_max});
+    % elif channels_first:
     RequantShift_${inSignage}${data_in_type.referencedType.typeWidth}_${outSignage}${data_out_type.referencedType.typeWidth}_NCHW(${data_in}, ${size}, ${mul}, ${add}, ${data_out}, ${log2Dstring}, ${channel_width}, 0, 0 , ${output_min}, ${output_max}, 1);
     % else:
     RequantShift_${inSignage}${data_in_type.referencedType.typeWidth}_${outSignage}${data_out_type.referencedType.typeWidth}_NHWC(${data_in}, ${size}, ${mul}, ${add}, ${data_out}, ${log2Dstring}, ${channels}, 0, 0, ${output_min}, ${output_max}, 1);

@@ -99,6 +99,7 @@ set(_KERNEL_O3_FILES
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/SILU_s8.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Layernorm.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/RMSNormI32.c
+  ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/RequantShiftNHWC.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Softplus.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/UniformRequantShift.c
   ${CMAKE_CURRENT_LIST_DIR}/../PULPOpen/src/Dequant.c

@@ -310,6 +310,10 @@ GAP9MatMulBindings = [
     # A is int32 (SSM dt_proj): needs the s32_s8 kernel; s8_s8 would misread A as int8.
     NodeBinding(MatMulChecker([PointerClass(int32_t), PointerClass(int8_t)], [PointerClass(int32_t)]),
                 GEMMTemplate.PULPMM_s32_s8_s32_Parallel_Template, GAP9Transformer)
+] + [
+    # A is int16 (wide SelectiveScanI16 output, FEMBA Mamba-2 classifier out_proj): pv.sdotsp.h kernel
+    NodeBinding(MatMulChecker([PointerClass(int16_t), PointerClass(int8_t)], [PointerClass(int32_t)]),
+                GEMMTemplate.PULPMM_s16_s8_s32_Parallel_Template, GAP9Transformer)
 ]
 
 GAP9ReduceMeanBindings = [
@@ -543,7 +547,7 @@ GAP9SelectiveScanI16Bindings = [
             PointerClass(sh_t),      # ysh = sH + bc_shift
         ], [PointerClass(out_t)]), SelectiveScanI16Template.referenceTemplate, GAP9Transformer)
     # constants are typed by value range by Deeploy: accept the narrow signed/unsigned 8-bit types
-    for out_t in (int8_t, int32_t)
+    for out_t in (int8_t, int16_t, int32_t)
     for shA_t in [int8_t, uint8_t]
     for sh_t in [uint8_t, int8_t]
 ]
