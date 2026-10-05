@@ -32,7 +32,7 @@ def scratchBytes(Q, N, P, NHt, GH, GW, decay_mode = 0):
     PXA = GH * GW
     WSZ = Q * (Q + 2 * N)
     ASZ = PXA * (2 * Q + N)
-    MSZ = META_HDR + 2 * Q + N + (2 * Q if decay_mode == 1 else 0)
+    MSZ = META_HDR + 2 * Q + N + (3 * Q if decay_mode == 1 else 0)
     QM = Q * max(Q, N)
     return NHt * (PXA * (Q + N) + 2 * WSZ + 4 * MSZ) + 4 * NE16_SLOTS * ASZ + 4 * Q * Q + 4 * NUM_CORES * (QM + Q) + 512
 

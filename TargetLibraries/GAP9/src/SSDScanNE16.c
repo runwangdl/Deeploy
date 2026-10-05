@@ -223,60 +223,33 @@ static __attribute__((noinline)) void ssdn_phaseA_item(const ssdn_ctx_t *cx, uin
   const uint32_t ts = cx->decay_mode == 1;
 
   if (ts && part == 3) {
-    // two-scale data item for head hh: rho = cumsum(-asr(R*rmul, 8)); gx[s] = e(rho_Q - rho_s); f1 = 2^30 / gx;
-    // f3 = e(rho_t); dec = e(Lam_Q + rho_Q) (Lam_Q from the shared item, recomputed here: cheap); xt = qshift(asr(x*dt*gx, 15))
-    int32_t *f1 = comp3 + Q, *f3 = f1 + Q;
-    int32_t *gx = lam;  // per-core scratch
-    {
-      const int8_t *Rh = cx->R + (b * L + t0) * NHt + hh;
-      int32_t rho = 0, lamQ = 0;
-      const int64_t A0 = (int64_t)A[0];
-      const int16_t *dta = cx->dta + (b * L + t0);
-      for (uint32_t t = 0; t < Q; t++) {
-        rho -= (int32_t)(((int32_t)Rh[t * NHt] * cx->resid_mul) >> 8);
-        f3[t] = ssdn_expq(exp_lut, rho);
-        gx[t] = rho;  // rho_t for now
-        lamQ += (int32_t)(((int64_t)dta[t] * A0) >> 8);
-      }
-      const int32_t rhoQ = gx[Q - 1];
-      for (uint32_t t = 0; t < Q; t++) {
-        const int32_t g = (t + 1 < Q) ? ssdn_expq(exp_lut, rhoQ - gx[t]) : SSDN_ONE_Q15;
-        gx[t] = g;
-        f1[t] = (int32_t)(((uint32_t)1 << 30) / (uint32_t)g);
-      }
-      mt[4] = ssdn_expq(exp_lut, lamQ + rhoQ);
+    // two-scale step 1, head hh: rho = cumsum(-asr(R*rmul, 8)); gx[s] = e(rho_Q - rho_s); f1 = 2^30 / gx; f3 = e(rho_t);
+    // dec = e(Lam_Q + rho_Q); shs from the per-core state maxima. x~ and S8 are steps 2/3 (spread over the cores).
+    int32_t *f1 = comp3 + Q, *f3 = f1 + Q, *gx = f3 + Q;
+    const int8_t *Rh = cx->R + (b * L + t0) * NHt + hh;
+    int32_t rho = 0, lamQ = 0;
+    const int64_t A0 = (int64_t)A[0];
+    const int16_t *dta = cx->dta + (b * L + t0);
+    for (uint32_t t = 0; t < Q; t++) {
+      rho -= (int32_t)(((int32_t)Rh[t * NHt] * cx->resid_mul) >> 8);
+      f3[t] = ssdn_expq(exp_lut, rho);
+      gx[t] = rho;  // rho_t for now
+      lamQ += (int32_t)(((int64_t)dta[t] * A0) >> 8);
     }
-    // state -> S8 (+128)
+    const int32_t rhoQ = gx[Q - 1];
+    for (uint32_t t = 0; t < Q; t++) {
+      const int32_t g = (t + 1 < Q) ? ssdn_expq(exp_lut, rhoQ - gx[t]) : SSDN_ONE_Q15;
+      gx[t] = g;
+      f1[t] = (int32_t)(((uint32_t)1 << 30) / (uint32_t)g);
+    }
+    mt[4] = ssdn_expq(exp_lut, lamQ + rhoQ);
     uint32_t mx = 0;
     for (uint32_t i = 0; i < NUM_CORES; i++) {
       const uint32_t m = (uint32_t)hmax[(b * NHt + hh) * NUM_CORES + i];
       mx = m > mx ? m : mx;
     }
-    const int shs = ssdn_pow2_exp(mx);
-    const int32_t *hs = h_state + (b * NHt + hh) * P * N;
-    uint8_t *su_h = su + hh * PXA * N;
-    for (uint32_t i = 0; i < P * N; i++)
-      su_h[i] = (uint8_t)(ssdn_qshift(hs[i], shs) ^ 0x80);
-    mt[3] = shs;
-    // v[s][c] = asr(x * dt_s * gx_s, 15), one pow2 scale per (head, chunk): pass 1 max, pass 2 quantise (P*Q values do
-    // not fit the per-core scratch). |x * dt * gx| < 2^7 * 2^15 * 2^15: the product needs 64 bits, v fits 32.
-    uint32_t vmx = 0;
-    for (uint32_t s_ = 0; s_ < Q; s_++) {
-      const int8_t *xrow = x + (b * L + t0 + s_) * d_inner + hh * P;
-      const int64_t m = (int64_t)dth[s_ * NHt] * gx[s_];
-      for (uint32_t c = 0; c < P; c++)
-        vmx = ssdn_absmax(vmx, (int32_t)(((int64_t)xrow[c] * m) >> 15));
-    }
-    const int shx = ssdn_pow2_exp(vmx);
-    mt[5] = shx;
-    uint8_t *xt_h = xt + hh * PXA * Q;
-    for (uint32_t s_ = 0; s_ < Q; s_++) {
-      const int8_t *xrow = x + (b * L + t0 + s_) * d_inner + hh * P;
-      const int64_t m = (int64_t)dth[s_ * NHt] * gx[s_];
-      uint8_t *dst = xt_h + s_;
-      for (uint32_t c = 0; c < P; c++)
-        dst[c * Q] = (uint8_t)(ssdn_qshift((int32_t)(((int64_t)xrow[c] * m) >> 15), shx) ^ 0x80);
-    }
+    mt[3] = ssdn_pow2_exp(mx);
+    (void)xt; (void)su; (void)h_state;
     return;
   }
 
@@ -402,6 +375,63 @@ static __attribute__((noinline)) void ssdn_epilogue_ts(const ssdn_ctx_t *cx, uin
         yr[c] = ssdn_sat_i32(osh > 0 ? ssdn_round_shift(y_g, osh) : y_g);
       }
     }
+}
+
+// two-scale step 2 (core `core` of NUM_CORES): per-(head, token) row maxima of v = floor(x*dt*gx / 2^15) into the
+// core's own scratch (pm[hh]), and the state -> S8 (+128) quantisation as contiguous ranges
+static __attribute__((noinline)) void ssdn_ts_step2(const ssdn_ctx_t *cx, uint32_t core, int32_t *pm) {
+  const int8_t *x = cx->x; const int16_t *dt = cx->dt; const int32_t *h_state = cx->h_state, *meta = cx->meta;
+  uint8_t *su = cx->su;
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, NHt = cx->NHt, P = cx->P, N = cx->N, Q = cx->Q;
+  const uint32_t PXA = cx->PXA, MSZ = cx->MSZ, d_inner = cx->d_inner;
+  for (uint32_t hh = 0; hh < NHt; hh++)
+    pm[hh] = 0;
+  for (uint32_t r = core; r < NHt * Q; r += NUM_CORES) {
+    const uint32_t hh = r / Q, s_ = r % Q;
+    const int32_t *gx = meta + hh * MSZ + SSDN_META_HDR + 4 * Q + N;
+    const int8_t *xrow = x + (b * L + t0 + s_) * d_inner + hh * P;
+    // m = dt * gx < 2^12 * 2^15 (Softplus Q8.8 LUT max 3251): floor(x*m / 2^15) = high word of (x << 17) * m
+    const int32_t m = (int32_t)dt[(b * L + t0 + s_) * NHt + hh] * gx[s_];
+    uint32_t vmx = (uint32_t)pm[hh];
+    for (uint32_t c = 0; c < P; c++)
+      vmx = ssdn_absmax(vmx, (int32_t)(((int64_t)((int32_t)xrow[c] << 17) * m) >> 32));
+    pm[hh] = (int32_t)vmx;
+  }
+  const uint32_t PN = P * N, tot = NHt * PN, ch = (tot + NUM_CORES - 1) / NUM_CORES;
+  const uint32_t i0 = core * ch < tot ? core * ch : tot, i1 = i0 + ch < tot ? i0 + ch : tot;
+  for (uint32_t i = i0; i < i1;) {
+    const uint32_t hh = i / PN, k0 = i - hh * PN, k1 = (hh + 1) * PN < i1 ? PN : i1 - hh * PN;
+    const int shs = meta[hh * MSZ + 3];
+    const int32_t *hs = h_state + (b * NHt + hh) * PN;
+    uint8_t *su_h = su + hh * PXA * N;
+    for (uint32_t k = k0; k < k1; k++)
+      su_h[k] = (uint8_t)(ssdn_qshift(hs[k], shs) ^ 0x80);
+    i = hh * PN + k1;
+  }
+}
+
+// two-scale step 3: shx per head from the cores' partial maxima (scratch stride `cstride`), x~ rows over the cores
+static __attribute__((noinline)) void ssdn_ts_step3(const ssdn_ctx_t *cx, uint32_t core, const int32_t *pm0,
+                                                    uint32_t cstride) {
+  const int8_t *x = cx->x; const int16_t *dt = cx->dt; int32_t *meta = cx->meta; uint8_t *xt = cx->xt;
+  const uint32_t b = cx->b, L = cx->L, t0 = cx->t0, NHt = cx->NHt, P = cx->P, N = cx->N, Q = cx->Q;
+  const uint32_t PXA = cx->PXA, MSZ = cx->MSZ, d_inner = cx->d_inner;
+  for (uint32_t r = core; r < NHt * Q; r += NUM_CORES) {
+    const uint32_t hh = r / Q, s_ = r % Q;
+    uint32_t vmx = 0;
+    for (uint32_t c = 0; c < NUM_CORES; c++)
+      vmx = (uint32_t)pm0[c * cstride + hh] > vmx ? (uint32_t)pm0[c * cstride + hh] : vmx;
+    const int shx = ssdn_pow2_exp(vmx);
+    int32_t *mt = meta + hh * MSZ;
+    if (s_ == 0)
+      mt[5] = shx;
+    const int32_t *gx = mt + SSDN_META_HDR + 4 * Q + N;
+    const int8_t *xrow = x + (b * L + t0 + s_) * d_inner + hh * P;
+    const int32_t m = (int32_t)dt[(b * L + t0 + s_) * NHt + hh] * gx[s_];
+    uint8_t *dst = xt + hh * PXA * Q + s_;
+    for (uint32_t c = 0; c < P; c++)
+      dst[c * Q] = (uint8_t)(ssdn_qshift((int32_t)(((int64_t)((int32_t)xrow[c] << 17) * m) >> 32), shx) ^ 0x80);
+  }
 }
 
 // y epilogue variants (int8 v2 / int32 / int8 v1), rows t of head hp in [e0, e1) of the flattened (t, c) range
@@ -606,7 +636,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   const uint32_t WSZ = Q * Q + N * Q + Q * N;     // int8 per head: W1 | W2 | W3
   const uint32_t ASZ = PXA * (2 * Q + N);         // int32 per slot: acc1 | acc2 | acc3
   // int32 per head: sh1 sh2 sh3 shs eQ0 shx - - comp1[Q] comp2[N] comp3[Q] (+ two-scale: f1[Q] f3[Q])
-  const uint32_t MSZ = SSDN_META_HDR + 2 * Q + N + (decay_mode == 1 ? 2 * Q : 0);
+  const uint32_t MSZ = SSDN_META_HDR + 2 * Q + N + (decay_mode == 1 ? 3 * Q : 0);  // two-scale: f1[Q] f3[Q] gx[Q]
   const uint32_t QM = Q * (Q > N ? Q : N);        // int32 per-core scratch
   const int16_t *exp_lut = SSDScan_exp_lut_ptr;
 
@@ -731,11 +761,16 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
       // part-major, heaviest part first (3: state quant + x transpose, 1: W2, 2: W3, 0: W1), round-robin over the
       // cores: head-major order gave every core the same part, so cores 3 and 7 did all the heavy items
       if (decay_mode == 1) {
-        // two-scale: the three weights once per chunk (head 0's slots, shared), plus one data item per head
+        // two-scale: (1) the three shared weights once per chunk (head 0's slots) + per-head factors;
+        // (2) x~ row maxima and S8 over all cores; (3) x~ quantisation over all cores
         for (uint32_t k = (uint32_t)core; k < 3 + NHt; k += NUM_CORES) {
           static const uint8_t ssdn_ts_order[3] = {1, 2, 0};
           ssdn_phaseA_item(cxp, k < 3 ? ssdn_ts_order[k] : (k - 3) * 4 + 3, cscr);
         }
+        pi_cl_team_barrier();
+        ssdn_ts_step2(cxp, (uint32_t)core, cscr);
+        pi_cl_team_barrier();
+        ssdn_ts_step3(cxp, (uint32_t)core, G + Q * Q, QM + Q);
       } else {
         for (uint32_t k = (uint32_t)core; k < 4 * NHt; k += NUM_CORES) {
           static const uint8_t ssdn_part_order[4] = {3, 1, 2, 0};
