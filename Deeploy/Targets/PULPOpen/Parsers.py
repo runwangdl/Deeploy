@@ -723,6 +723,7 @@ class PULPSSDScanNE16Parser(PULPSSDScanParser):
             if 'd_inner' in self.operatorRepresentation:   # MIMO: x/z/y columns are (head, channel, rank)
                 self.operatorRepresentation['d_inner'] *= Rk
             self.operatorRepresentation['bc_norm'] = int(node.attrs.get('bc_norm', 0))
+            self.operatorRepresentation['core_mm'] = int(node.attrs.get('core_mm', 0))   # A1: products on the cores
             for k in ('dta', 'R', 'm3_gamma', 'm3_w', 'm3_theta', 'bc_Bw', 'bc_Cw', 'bc_Bb', 'bc_Cb'):
                 self.operatorRepresentation[k] = 'NULL'
         return ret

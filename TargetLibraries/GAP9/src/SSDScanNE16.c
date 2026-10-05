@@ -1069,6 +1069,37 @@ static __attribute__((noinline)) void ssdn_epi_v1(const ssdn_ctx_t *cx, uint32_t
 // finish head hh-1: y epilogue + state update (own frame)
 // work split: worker wi of nw (core 0 sits out while it dispatches the next head's NE16 jobs); outputs and state
 // elements are split as contiguous ranges of the flattened (row, col) / (channel, state) index
+// core_mm (hybrid placement, review item A1): the two per-head products on the cluster cores instead of the NE16 --
+// out[p][ko] = sum_k W[ko][k] * in[p][k], int8 weights (w8, [KO][KI]) times the same uint8 (+128) inputs the NE16 reads,
+// int32 out in the NE16 output layout, so the comp / epilogue path is unchanged and the result is bit-identical.
+static __attribute__((noinline)) void ssdn_core_mm(const uint8_t *in, const int8_t *W, int32_t *out, uint32_t PX,
+                                                   uint32_t KI, uint32_t KO, uint32_t core) {
+  const uint32_t ch = (PX + NUM_CORES - 1) / NUM_CORES;
+  const uint32_t p0 = core * ch < PX ? core * ch : PX, p1 = p0 + ch < PX ? p0 + ch : PX;
+  for (uint32_t p = p0; p < p1; p++) {
+    const uint8_t *x = in + p * KI;
+    int32_t *o = out + p * KO;
+    if ((KI & 3) == 0) {
+      const v4u *xv = (const v4u *)x;
+      for (uint32_t ko = 0; ko < KO; ko++) {
+        const v4s *wv = (const v4s *)(W + ko * KI);
+        int32_t acc = 0;
+        for (uint32_t k = 0; k < KI / 4; k++)
+          acc = __builtin_pulp_sdotusp4(xv[k], wv[k], acc);
+        o[ko] = acc;
+      }
+    } else {
+      for (uint32_t ko = 0; ko < KO; ko++) {
+        const int8_t *w = W + ko * KI;
+        int32_t acc = 0;
+        for (uint32_t k = 0; k < KI; k++)
+          acc += (int32_t)x[k] * (int32_t)w[k];
+        o[ko] = acc;
+      }
+    }
+  }
+}
+
 static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uint32_t hh, uint32_t wi, uint32_t nw) {
   int32_t *h_state = cx->h_state; int32_t *hmax = cx->hmax; const int32_t *meta = cx->meta;
   const uint32_t b = cx->b, NHt = cx->NHt, P = cx->P, N = cx->N, Q = cx->Q;
@@ -1145,7 +1176,8 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
                             const int16_t *__restrict__ m3_gamma, const int16_t *__restrict__ m3_w,
                             const int16_t *__restrict__ m3_theta, uint32_t mamba3, uint32_t mimo_rank,
                             const int32_t *__restrict__ bc_Bw, const int32_t *__restrict__ bc_Cw,
-                            const int32_t *__restrict__ bc_Bb, const int32_t *__restrict__ bc_Cb, uint32_t bc_norm) {
+                            const int32_t *__restrict__ bc_Bb, const int32_t *__restrict__ bc_Cb, uint32_t bc_norm,
+                            uint32_t core_mm) {
   const int core = (int)pi_core_id();
   pi_cl_team_barrier();   // the template's gate LUT copy (split over the cores) is complete
   const uint32_t Rk = mimo_rank ? mimo_rank : 1;   // Mamba-3 MIMO rank: the token axis becomes (token, rank) pairs
@@ -1376,6 +1408,17 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
       pi_cl_team_barrier();
       SSDN_T(prof_b0);
 
+      if (core_mm) {   // hybrid placement: both products on the cores, then all cores finish the head
+        for (uint32_t hh = 0; hh < NHt; hh++) {
+          const int8_t *wh = w8 + (decay_mode == 1 ? 0 : hh * WSZ);
+          int32_t *a = acc + (hh & 1) * ASZ;
+          ssdn_core_mm(xt + hh * PXA * QR, wh, a, PXA, QR, QR + N, (uint32_t)core);
+          ssdn_core_mm(su + hh * PXA * N, wh + QR * QR + N * QR, a + PXA * (QR + N), PXA, N, QR, (uint32_t)core);
+          pi_cl_team_barrier();
+          ssdn_finish_head(cxp, hh + 1, (uint32_t)core, NUM_CORES);
+          pi_cl_team_barrier();
+        }
+      } else
       // ---- phase B: core 0 queues head hh, everybody finishes head hh-1 while the NE16 runs ----
       for (uint32_t hh = 0; hh <= NHt; hh++) {
         SSDN_T(pb_t0);

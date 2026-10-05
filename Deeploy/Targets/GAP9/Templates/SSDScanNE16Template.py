@@ -132,6 +132,7 @@ GAP9_SSDScanNE16_i8_i8(
     (const int32_t *) ${bc_Cw},
     (const int32_t *) ${bc_Bb},
     (const int32_t *) ${bc_Cb},
-    ${bc_norm}
+    ${bc_norm},
+    ${core_mm}
 );
 """)
