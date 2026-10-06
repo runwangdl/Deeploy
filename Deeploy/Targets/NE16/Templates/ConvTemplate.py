@@ -163,6 +163,18 @@ class NE162DPWConvTemplate(NE16ConvTemplate):
     def __init__(self, templateStr: str):
         super().__init__(templateStr)
 
+    def alignToContext(self, ctxt: NetworkContext,
+                       operatorRepresentation: OperatorRepresentation) -> Tuple[NetworkContext, Dict, List[str]]:
+        ctxt, operatorRepresentation, names = super().alignToContext(ctxt, operatorRepresentation)
+        # Flat pixel column (W == 1, stride 1, no padding): the tile's pixels are contiguous, so the execution
+        # template re-views them as silicon-legal jobs (see NE16PWTaskExecutionTemplateStr).
+        operatorRepresentation["pw_flat"] = (operatorRepresentation["dim_im_out_y"] == 1
+                                             and operatorRepresentation["dim_im_in_y"] == 1
+                                             and all(int(p) == 0 for p in operatorRepresentation.get("pads", [0]))
+                                             and all(int(st) == 1 for st in operatorRepresentation.get("strides", [1])))
+        operatorRepresentation["pw_npix"] = operatorRepresentation["dim_im_out_x"] * operatorRepresentation["dim_im_out_y"]
+        return ctxt, operatorRepresentation, names
+
     @classmethod
     def getCounters(
             cls, channel_in: int, height_out: int, width_out: int, channel_out: int, padding_bottom: int,
@@ -390,8 +402,65 @@ ne16_nnx_dispatch(ne16_pulp_get_dev(), &task);
 ne16_nnx_resolve_wait(ne16_pulp_get_dev(), &task);
 """
 
-NE16RqntPWConv2D_Template = NE162DPWConvTemplate(NE16TaskInitTemplateStr + NE16TaskExecutionTemplateStr)
-NE16PWConv2D_Template = NE162DPWConvTemplate(NE16TaskInitTemplateStr + NE16TaskExecutionTemplateStr)
+# Pointwise execution. On the GAP9 EVK a 1x1 job whose H or W spans several 3-wide subtiles with a partial last one
+# corrupts outputs (gvsoc does not model it), so every job must have H and W each a multiple of 3 or < 3. For a flat
+# pixel column the npix contiguous pixels of the tile are re-viewed as jobs of that shape:
+#   npix >= 9 : (3*(npix/9), 3) at pixel 0, plus for the npix%9 tail one (ceil(tail/3), 3) job ending at pixel npix
+#               (it may overlap the first job; overlapped pixels are recomputed with identical inputs, so identical
+#               outputs are written twice);
+#   3..8      : (npix/3, 3) at pixel 0, plus a (1, 3) job ending at npix if npix%3;
+#   < 3       : (npix, 1).
+# That is ceil(npix/9) 3x3 subtiles per Ko/Ki step (optimal) for npix >= 9, independently of how M factors.
+NE16PWTaskExecutionTemplateStr = """
+% if pw_flat:
+// N-EUREKA Task Execution (flat pixel column -> silicon-legal jobs)
+{
+    const uint32_t _npix = ${pw_npix};
+    const uint32_t _in_px = ${dim_im_in_y_stride};
+    const uint32_t _out_px = ${dim_im_out_y_stride};
+    uint32_t _h0, _w0, _h1 = 0, _off1 = 0;
+    if (_npix >= 9) {
+        const uint32_t _tail = _npix % 9;
+        _h0 = 3 * (_npix / 9); _w0 = 3;
+        if (_tail) { _h1 = (_tail + 2) / 3; _off1 = _npix - 3 * _h1; }
+    } else if (_npix >= 3) {
+        _h0 = _npix / 3; _w0 = 3;
+        if (_npix % 3) { _h1 = 1; _off1 = _npix - 3; }
+    } else {
+        _h0 = _npix; _w0 = 1;
+    }
+    {
+        const uint16_t _nh = (_h0 + 2) / 3, _bh = _h0 - 3 * (_nh - 1);
+        const uint16_t _nw = (_w0 + 2) / 3, _bw = _w0 - 3 * (_nw - 1);
+        task.data.cfg.subtile.number.HoWo = nnx_concat_half(_nh, _nw);
+        task.data.cfg.subtile.remainder.HoWo = nnx_concat_half(_bh, _bw);
+        task.data.cfg.subtile.remainder.HiWi = nnx_concat_half(_bh, _bw);
+        task.data.cfg.input_stride.d1 = _w0 * _in_px;
+        task.data.cfg.output_stride.d2 = _w0 * _out_px;
+    }
+    ne16_nnx_dispatch_wait(ne16_pulp_get_dev());
+    ne16_nnx_dispatch(ne16_pulp_get_dev(), &task);
+    if (_h1) {
+        // tail job (_h1 <= 3, W = 3)
+        task.data.infeat_addr += _off1 * _in_px;
+        task.data.outfeat_addr += _off1 * _out_px;
+        task.data.cfg.subtile.number.HoWo = nnx_concat_half(1, 1);
+        task.data.cfg.subtile.remainder.HoWo = nnx_concat_half(_h1, 3);
+        task.data.cfg.subtile.remainder.HiWi = nnx_concat_half(_h1, 3);
+        task.data.cfg.input_stride.d1 = 3 * _in_px;
+        task.data.cfg.output_stride.d2 = 3 * _out_px;
+        ne16_nnx_dispatch_wait(ne16_pulp_get_dev());
+        ne16_nnx_dispatch(ne16_pulp_get_dev(), &task);
+    }
+    ne16_nnx_resolve_wait(ne16_pulp_get_dev(), &task);
+}
+% else:
+""" + NE16TaskExecutionTemplateStr + """
+% endif
+"""
+
+NE16RqntPWConv2D_Template = NE162DPWConvTemplate(NE16TaskInitTemplateStr + NE16PWTaskExecutionTemplateStr)
+NE16PWConv2D_Template = NE162DPWConvTemplate(NE16TaskInitTemplateStr + NE16PWTaskExecutionTemplateStr)
 
 NE16RqntDWConv2D_Template = NE162DDWConvTemplate(NE16TaskInitTemplateStr + NE16TaskExecutionTemplateStr)
 NE16DWConv2D_Template = NE162DDWConvTemplate(NE16TaskInitTemplateStr + NE16TaskExecutionTemplateStr)

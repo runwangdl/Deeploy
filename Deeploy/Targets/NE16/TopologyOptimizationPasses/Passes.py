@@ -227,6 +227,11 @@ def _bestReshapeOption(dim: int) -> Tuple[int, int]:
     return biggestDim, smallestDim
 
 
+# Reshape every NE16 1x1 conv to a (M, 1) pixel column; the pointwise template then decomposes each tile into
+# legal jobs. Set DEEPLOY_NE16_PW_FLAT=0 to get the previous best-factorisation reshape.
+NE16_PW_FLAT_PIXELS = os.environ.get("DEEPLOY_NE16_PW_FLAT", "1") != "0"
+
+
 def _ne16_reshape_pointwise_convolution_fun(graph: gs.Graph, match: Match, name: str, default_channels_first: bool,
                                             ne16EngineName: str):
     matched_nodes = list(match.nodes_map.values())
@@ -257,7 +262,13 @@ def _ne16_reshape_pointwise_convolution_fun(graph: gs.Graph, match: Match, name:
 
     _input = node.inputs[0]
     spatialDims = extractSpatialDims(_input.shape)
-    newSpatialDims = _bestReshapeOption(math.prod(spatialDims))
+    if NE16_PW_FLAT_PIXELS:
+        # Flat pixel column (M, 1): any H tile is a contiguous run of pixels, and the pointwise template splits each
+        # tile into silicon-legal 3x3-aligned jobs (see NE162DPWConvTemplate), so the factorisation of M no longer
+        # constrains tiling and costs ceil(M_tile / 9) subtiles instead of e.g. 14 for 80 = 40 x 2.
+        newSpatialDims = (math.prod(spatialDims), 1)
+    else:
+        newSpatialDims = _bestReshapeOption(math.prod(spatialDims))
     newInputShape = replaceSpatialDims(_input.shape, newSpatialDims)
 
     inputReshapeNode, reshapedInput = _createReshape(_input, name, newInputShape)

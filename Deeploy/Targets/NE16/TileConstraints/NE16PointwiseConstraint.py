@@ -18,6 +18,7 @@ from Deeploy.TilingExtension.TilerModel import PerformanceHint, TilerModel
 # NE16 emits a 3x3 output patch per pass
 # (NE16_SUBTILE_OUTPUT_HEIGHT / NE16_SUBTILE_OUTPUT_WIDTH in pulp-nnx's ne16_task_defs.h)
 _NE16_SUBTILE_OUTPUT_HW = 3
+_NE16_SUBTILE_PIXELS = _NE16_SUBTILE_OUTPUT_HW * _NE16_SUBTILE_OUTPUT_HW
 from Deeploy.TilingExtension.TilingCodegen import AbsoluteHyperRectangle, HyperRectangle, TilingSchedule, \
     VariableReplacementScheme, calculateFlatOffsetInBytes
 
@@ -126,8 +127,11 @@ class NE16PWConv2DTileConstraint(TileConstraint):
         # a partial last one corrupts outputs of the first subtile (FEMBA in_proj: 3566 / 123200 wrong; SSD kernel
         # grids 3x11 and 11x3 wrong, 3x12 / 33x1 right). So every job's H and W must be a multiple of 3 or < 3:
         # tile size a multiple of 3 and the remainder tile at most 2 (always feasible with tile 3).
+        # A flat pixel column (W == 1, see NE16ReshapePointwiseConvolutionPass) is exempt: every H tile is a contiguous
+        # run of pixels that the template splits into legal jobs ((3k, 3) plus a (<=3, 3) tail, or (<3, 1)).
+        flatPixels = parseDict["dim_im_out_y"] == 1
         for dimName, dimVar in (("dim_im_out_x", outputHeightVar), ("dim_im_out_y", outputWidthVar)):
-            if parseDict[dimName] >= _NE16_SUBTILE_OUTPUT_HW:
+            if parseDict[dimName] >= _NE16_SUBTILE_OUTPUT_HW and not flatPixels:
                 rem = tilerModel.addTileSizeDivisibleConstraint(parseDict, dimName, dimVar, _NE16_SUBTILE_OUTPUT_HW,
                                                                 prefix = "silicon_")
                 tilerModel.addConstraint(rem <= _NE16_SUBTILE_OUTPUT_HW - 1)
@@ -135,7 +139,14 @@ class NE16PWConv2DTileConstraint(TileConstraint):
         # Align the spatial tile with NE16's hardware subtiling. NE16 emits a 3x3 output patch per
         # pass; the value used here was 6, inherited verbatim from N-EUREKA whose PE array is 6x6.
         # On NE16 that misaligns every dimension that is a multiple of 3 but not of 6.
-        if parseDict["dim_im_out_x"] > _NE16_SUBTILE_OUTPUT_HW:
+        if flatPixels and parseDict["dim_im_out_x"] > _NE16_SUBTILE_PIXELS:
+            # flat column: a job retires 9 pixels per subtile, so ask for tiles of a multiple of 9 pixels
+            tilerModel.addTileSizeDivisibleConstraint(parseDict,
+                                                      "dim_im_out_x",
+                                                      outputHeightVar,
+                                                      _NE16_SUBTILE_PIXELS,
+                                                      strategy = PerformanceHint(priority = 3))
+        elif parseDict["dim_im_out_x"] > _NE16_SUBTILE_OUTPUT_HW:
             tilerModel.addTileSizeDivisibleConstraint(parseDict,
                                                       "dim_im_out_x",
                                                       outputHeightVar,
@@ -200,6 +211,7 @@ class NE16PWConv2DTileConstraint(TileConstraint):
             "bWo": [],
             "bHi": [],
             "bWi": [],
+            "pw_npix": [],
         }
 
         replacementTypes = {
@@ -222,6 +234,7 @@ class NE16PWConv2DTileConstraint(TileConstraint):
             "bWo": PointerClass(uint16_t),
             "bHi": PointerClass(uint16_t),
             "bWi": PointerClass(uint16_t),
+            "pw_npix": PointerClass(uint16_t),
         }
 
         weightH = operatorRepresentation['dim_kernel_y']
@@ -281,6 +294,7 @@ class NE16PWConv2DTileConstraint(TileConstraint):
             replacements["bWo"].append(bWo)
             replacements["bHi"].append(bHi)
             replacements["bWi"].append(bWi)
+            replacements["pw_npix"].append(HSize * WSize)
 
             inputInCubes.append(InCube)
 
