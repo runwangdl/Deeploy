@@ -119,8 +119,54 @@ void cl_ram_read(void *dest, void *src, const size_t size) {
 
 void cl_ram_write(void *dest, void *src, const size_t size) {
   pi_cl_ram_req_t req;
-  pi_cl_ram_write(&ram, (uint32_t)dest, src, size, &req);
-  pi_cl_ram_write_wait(&req);
+  if (gap9_ram_copy_2d((uint32_t)dest, src, size, size, size, 0, &req))
+    pi_cl_ram_write_wait(&req);
+}
+
+// GAP9 EVK PSRAM: a burst that crosses a page boundary with only a few bytes before it
+// wraps -- the bytes after the boundary land at the START of the same page (measured: a
+// 120 B L2->L3 row with 2 B before a 2 KB boundary wrote its last 118 B 2048 B lower; rows
+// with >= 5 B before the boundary were correct). gvsoc does not model it. Rows at risk are
+// rare (head < GAP9_RAM_MIN_HEAD at a GAP9_RAM_PAGE boundary), so the common case stays one
+// asynchronous pi_cl_ram_copy_2d (returns 1: req is in flight); a transfer that contains a
+// risky row is copied synchronously instead, with the head of each risky row split off as
+// its own copy (returns 0: nothing in flight).
+static inline int gap9_ram_row_risky(uint32_t ext, uint32_t len) {
+  const uint32_t head = GAP9_RAM_PAGE - (ext & (GAP9_RAM_PAGE - 1));
+  return head < GAP9_RAM_MIN_HEAD && len > head;
+}
+
+int gap9_ram_copy_2d(uint32_t ext, void *loc, uint32_t size, uint32_t stride, uint32_t len, int ext2loc,
+                     pi_cl_ram_req_t *req) {
+  if (len >= size || stride == len) { // contiguous: only the first boundary can have a short head
+    stride = len = size;
+  }
+  uint32_t rows = size / len, r = 0;
+  for (; r < rows; r++)
+    if (gap9_ram_row_risky(ext + r * stride, len)) break;
+  if (r == rows) {
+    pi_cl_ram_copy_2d(&ram, ext, loc, size, stride, len, ext2loc, req);
+    return 1;
+  }
+  uint8_t *l = (uint8_t *)loc;
+  uint32_t r0 = 0; // first row not yet copied
+  for (r = 0; r <= rows; r++) {
+    const int risky = r < rows && gap9_ram_row_risky(ext + r * stride, len);
+    if (r < rows && !risky) continue;
+    if (r > r0) { // rows r0 .. r-1 in one 2-D copy
+      pi_cl_ram_copy_2d(&ram, ext + r0 * stride, l + r0 * len, (r - r0) * len, stride, len, ext2loc, req);
+      pi_cl_ram_copy_wait(req);
+    }
+    if (risky) { // head, then the rest from the page boundary on
+      const uint32_t e = ext + r * stride, head = GAP9_RAM_PAGE - (e & (GAP9_RAM_PAGE - 1));
+      pi_cl_ram_copy(&ram, e, l + r * len, head, ext2loc, req);
+      pi_cl_ram_copy_wait(req);
+      pi_cl_ram_copy(&ram, e + head, l + r * len + head, len - head, ext2loc, req);
+      pi_cl_ram_copy_wait(req);
+    }
+    r0 = r + 1;
+  }
+  return 0;
 }
 
 size_t load_file_to_ram(const void *dest, const char *filename) {

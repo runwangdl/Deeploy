@@ -40,7 +40,7 @@ class GAP9L3Dma(AsyncDma):
         2:
             NodeTemplate(
                 """if (${future}_n == GAP9_L3_REQ_SLOTS) { for (uint32_t _r = 0; _r < ${future}_n; _r++) pi_cl_ram_copy_wait(&${future}[_r]); ${future}_n = 0; }
-pi_cl_ram_copy_2d(get_ram_ptr(), (uint32_t)${ext}, (void *)${loc}, (uint32_t)${transfer_size}, (uint32_t)${stride}, (uint32_t)${length}, ${ext2loc}, &${future}[${future}_n++]);"""
+${future}_n += gap9_ram_copy_2d((uint32_t)${ext}, (void *)${loc}, (uint32_t)${transfer_size}, (uint32_t)${stride}, (uint32_t)${length}, ${ext2loc}, &${future}[${future}_n]);"""
             )
     }
     _waitingStrategy = PerTensorWaitingStrategy(GAP9L3DmaFuture)
@@ -70,6 +70,9 @@ pi_cl_ram_copy_2d(get_ram_ptr(), (uint32_t)${ext}, (void *)${loc}, (uint32_t)${t
         })
         return operatorRepresentation
 
+
+# gap9_ram_copy_2d (TargetLibraries/GAP9/src/dory_mem.c) wraps pi_cl_ram_copy_2d: it splits the rare
+# rows that would hit the EVK PSRAM page-wrap bug and returns 0 (copied synchronously) or 1 (in flight).
 
 # Blocking adapter for L3 DMA. Used as the single-buffer path in PULPL3Tiling:
 # SB blocks on each transfer, DB uses the async GAP9L3Dma above so the L3<->L2
