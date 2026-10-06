@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import math
-from typing import List, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
 from Deeploy.AbstractDataTypes import VoidType
 from Deeploy.DeeployTypes import CodeSnippet, ExecutionBlock, NetworkContext, NodeTemplate, OperatorRepresentation, \
@@ -42,8 +42,22 @@ class DoubleBufferingTilingCodeGeneration(TilingCodeGeneration):
 
     _referenceUpdate = NodeTemplate("${reference} = (${type})${update};")
 
+    _reuseCheckOpenStatement = NodeTemplate("""
+    if (${flags}[TILING_I+1] || (TILING_I+1) < ${numTiles}[*${tileIdxPtr}] + 2) {
+    """)
+
     def __init__(self, externalMemory: str, localMemory: str, dma: AsyncDma):
         super().__init__(externalMemory, localMemory, dma, 2)
+
+    @staticmethod
+    def _reuseFlags(tilingSchedule: TilingSchedule) -> Dict[str, List[bool]]:
+        # Double buffering: tile t uses local buffer t % 2, last filled for tile t-2.
+        flags = {}
+        for name, keys in getattr(tilingSchedule, "inputAbsoluteKeys", {}).items():
+            if len(keys) != len(tilingSchedule.inputLoadSchedule):
+                continue
+            flags[name] = [idx > 1 and keys[idx] == keys[idx - 2] for idx in range(len(keys))]
+        return flags
 
     def _switch(self, caseBlocks: List[List[CodeSnippet]], tileIdxVar: str) -> List[CodeSnippet]:
         assert len(caseBlocks) == self.bufferCount, f"Expected {self.bufferCount} cases, got {len(caseBlocks)}`"
@@ -114,6 +128,8 @@ class DoubleBufferingTilingCodeGeneration(TilingCodeGeneration):
         # 4.2) Input Data Transfers
         # -----------------------------------
 
+        reuseFlags = self._reuseFlags(tilingSchedule)
+
         buffer_choices: List[List[CodeSnippet]] = [[], []]
         for tensorName, rectangles in dictOfArrays(tilingSchedule.inputLoadSchedule).items():
             localBuffer = ctxt.lookup(operatorRepresentation[tensorName])
@@ -183,9 +199,22 @@ class DoubleBufferingTilingCodeGeneration(TilingCodeGeneration):
             if future not in ingressFutures:
                 ingressDMAStatements.append(future.alloc())
 
-            ingressDMAStatements.extend(
-                self._generateDmaTransferCalls(ctxt, tensorName, rectangles, "TILING_I+1", nextLocalBufferReference,
-                                               externalBufferRef, "ExternalToLocal", future))
+            nextTransferCalls = self._generateDmaTransferCalls(ctxt, tensorName, rectangles, "TILING_I+1",
+                                                               nextLocalBufferReference, externalBufferRef,
+                                                               "ExternalToLocal", future)
+            reuse = reuseFlags.get(tensorName)
+            if reuse is not None and any(reuse):
+                # The local buffer of tile t (buffer t % 2) was last filled for tile t-2: if that was the same
+                # cube, keep it. Only within this loop invocation (tile t-2 must belong to it).
+                loadFlags = self._hoistValues(ctxt, f"{tensorName}_load", [0 if r else 1 for r in reuse])
+                ingressDMAStatements.append(
+                    CodeSnippet(self._reuseCheckOpenStatement, {
+                        **operatorRepresentation, "flags": loadFlags.name
+                    }))
+                ingressDMAStatements.extend(nextTransferCalls)
+                ingressDMAStatements.append(CodeSnippet(self._moveTileInCheckCloseStatement, {}))
+            else:
+                ingressDMAStatements.extend(nextTransferCalls)
             # 4.2.5) Update external reference for next til
             referenceUpdate = self._generateExternalReferenceUpdate(ctxt, tensorName, rectangles, "TILING_I+1",
                                                                     externalBufferRef)
