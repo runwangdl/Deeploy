@@ -270,6 +270,10 @@ class TilingSchedule():
         self.outputBaseOffsets = outputBaseOffsets
         self.inputLoadSchedule = inputLoadSchedule
         self.outputLoadSchedule = outputLoadSchedule
+        # Optional, per input tensor: one hashable key per tile identifying the tile's cube in the *full* tensor
+        # (absolute, not relative to the outer tile). Two consecutive tiles with equal keys load the same data, so
+        # a single-buffered loop can keep the local copy instead of transferring it again.
+        self.inputAbsoluteKeys: Dict[str, List] = {}
 
     def __repr__(self) -> str:
         outStr = ""
@@ -327,6 +331,12 @@ class TilingSchedule():
 
         new.inputLoadSchedule += other.inputLoadSchedule
         new.outputLoadSchedule += other.outputLoadSchedule
+
+        selfKeys = getattr(self, "inputAbsoluteKeys", {})
+        otherKeys = getattr(other, "inputAbsoluteKeys", {})
+        new.inputAbsoluteKeys = {
+            name: list(selfKeys[name]) + list(otherKeys[name]) for name in selfKeys if name in otherKeys
+        }
 
         return new
 

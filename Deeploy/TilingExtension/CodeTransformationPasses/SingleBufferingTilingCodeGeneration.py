@@ -2,11 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from Deeploy.AbstractDataTypes import VoidType
-from Deeploy.DeeployTypes import CodeSnippet, ExecutionBlock, NetworkContext, OperatorRepresentation, VariableBuffer, \
-    _ReferenceBuffer
+from Deeploy.DeeployTypes import CodeSnippet, ExecutionBlock, NetworkContext, NodeTemplate, OperatorRepresentation, \
+    VariableBuffer, _ReferenceBuffer
 from Deeploy.TilingExtension.AsyncDma import AsyncDma, DmaDirection, Future
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingCodeGeneration import TilingCodeGeneration
 from Deeploy.TilingExtension.CodeTransformationPasses.TilingHoistingMixIn import dictOfArrays
@@ -19,6 +19,23 @@ from Deeploy.TilingExtension.TilingCodegen import HyperRectangle, TilingSchedule
 
 class SingleBufferingTilingCodeGeneration(TilingCodeGeneration):
 
+    _openSkipTemplate = NodeTemplate("""
+    if (${flags}[${tileIdxVar}]) {
+    """)
+
+    _closeSkipTemplate = NodeTemplate("""
+    }
+    """)
+
+    @staticmethod
+    def _reuseFlags(tilingSchedule: TilingSchedule) -> Dict[str, List[bool]]:
+        flags = {}
+        for name, keys in getattr(tilingSchedule, "inputAbsoluteKeys", {}).items():
+            if len(keys) != len(tilingSchedule.inputLoadSchedule):
+                continue
+            flags[name] = [idx > 0 and keys[idx] == keys[idx - 1] for idx in range(len(keys))]
+        return flags
+
     def __init__(self, externalMemory: str, localMemory: str, dma: AsyncDma):
         super().__init__(externalMemory, localMemory, dma, 1)
 
@@ -26,8 +43,11 @@ class SingleBufferingTilingCodeGeneration(TilingCodeGeneration):
             self, ctxt: NetworkContext, operatorRepresentation: OperatorRepresentation,
             transferSchedule: List[Dict[str, HyperRectangle]], tensorMemoryConstraintDict: Dict[str,
                                                                                                 TensorMemoryConstraint],
-            tileIdxVar: str, direction: DmaDirection) -> Tuple[NetworkContext, List[CodeSnippet], Set[Future]]:
+            tileIdxVar: str,
+            direction: DmaDirection,
+            reuseFlags: Optional[Dict[str, List[bool]]] = None) -> Tuple[NetworkContext, List[CodeSnippet], Set[Future]]:
         callStack: List[CodeSnippet] = []
+        reuseFlags = reuseFlags or {}
         futures: Set[Future] = set()
 
         for tensorName, rectangles in dictOfArrays(transferSchedule).items():
@@ -60,11 +80,24 @@ class SingleBufferingTilingCodeGeneration(TilingCodeGeneration):
                 callStack.append(future.alloc())
 
             try:
-                callStack.extend(
-                    self._generateDmaTransferCalls(ctxt, tensorName, rectangles, tileIdxVar, localBuffer,
-                                                   externalBufferRef, direction, future))
+                transferCalls = self._generateDmaTransferCalls(ctxt, tensorName, rectangles, tileIdxVar, localBuffer,
+                                                               externalBufferRef, direction, future)
             except AssertionError as e:
                 raise AssertionError(f"{e} while generating DMA transfer for tensor '{tensorName}'") from e
+
+            reuse = reuseFlags.get(tensorName)
+            if reuse is not None and any(reuse) and len(reuse) == len(rectangles):
+                # The previous tile loaded the same cube into this (single) local buffer: keep it.
+                loadFlags = self._hoistValues(ctxt, f"{tensorName}_load", [0 if r else 1 for r in reuse])
+                callStack.append(
+                    CodeSnippet(self._openSkipTemplate, {
+                        "flags": loadFlags.name,
+                        "tileIdxVar": tileIdxVar
+                    }))
+                callStack.extend(transferCalls)
+                callStack.append(CodeSnippet(self._closeSkipTemplate, {}))
+            else:
+                callStack.extend(transferCalls)
 
             referenceUpdate = self._generateExternalReferenceUpdate(ctxt, tensorName, rectangles, tileIdxVar,
                                                                     externalBufferRef)
@@ -95,7 +128,8 @@ class SingleBufferingTilingCodeGeneration(TilingCodeGeneration):
         # 2.2) Input data transfer for current tile
         ctxt, ingressDMAStatements, ingressFutures = self._generateTransferScheduleCalls(
             ctxt, operatorRepresentation, tilingSchedule.inputLoadSchedule,
-            nodeMemoryConstraint.inputTensorMemoryConstraints, "TILING_I", "ExternalToLocal")
+            nodeMemoryConstraint.inputTensorMemoryConstraints, "TILING_I", "ExternalToLocal",
+            self._reuseFlags(tilingSchedule))
 
         ingressDMAStatements = [CodeSnippet(self._lineComment, {"comment": "Transfer input tiles"})
                                ] + ingressDMAStatements

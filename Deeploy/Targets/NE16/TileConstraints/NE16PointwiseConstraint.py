@@ -176,6 +176,20 @@ class NE16PWConv2DTileConstraint(TileConstraint):
 
         return tilerModel
 
+    @staticmethod
+    def _absoluteKeys(absoluteOutputCubes: List[AbsoluteHyperRectangle], names: List[str]) -> Dict[str, List]:
+        # Per tile, which part of the full tensor each input covers (1x1 conv, full input channels): the activation
+        # by its pixels, the weights / requant parameters by their output channels. Consecutive tiles with the same
+        # key (e.g. the spatial tiles of one output-channel slice) need not reload it into a single-buffered L1.
+        keys: Dict[str, List] = {}
+        for name in names:
+            if name == 'data_in':
+                keys[name] = [(c.absoluteOffset[1], c.absoluteOffset[2], c.rectangle.dims[1], c.rectangle.dims[2])
+                              for c in absoluteOutputCubes]
+            else:
+                keys[name] = [(c.absoluteOffset[-1], c.rectangle.dims[-1]) for c in absoluteOutputCubes]
+        return keys
+
     @classmethod
     def serializeTilingSolution(
             cls, tilingSolution: NodeMemoryConstraint, absoluteOutputCubes: List[AbsoluteHyperRectangle],
@@ -329,6 +343,7 @@ class NE16PWConv2DTileConstraint(TileConstraint):
                 load['weight'] = HyperRectangle((COffset, 0, 0), (CSize, weightShape[-2], weightShape[-1]))
 
         tilingSchedule = TilingSchedule(inputBaseOffsets, outputBaseOffsets, inputLoadSchedule, outputLoadSchedule)
+        tilingSchedule.inputAbsoluteKeys = cls._absoluteKeys(absoluteOutputCubes, ['data_in', 'weight'])
         variableReplacementSchedule = VariableReplacementScheme(replacements, replacementTypes)
 
         return variableReplacementSchedule, tilingSchedule
@@ -362,5 +377,7 @@ class NE16RQSPWConv2DTileConstraint(NE16PWConv2DTileConstraint):
 
         newTilingSchedule = TilingSchedule(newInputBaseOffsets, tilingSchedule.outputBaseOffsets, newInputLoadSchedule,
                                            tilingSchedule.outputLoadSchedule)
+        newTilingSchedule.inputAbsoluteKeys = cls._absoluteKeys(absoluteOutputCubes,
+                                                                ['data_in', 'weight', 'mul', 'add'])
 
         return variableReplacementSchedule, newTilingSchedule
