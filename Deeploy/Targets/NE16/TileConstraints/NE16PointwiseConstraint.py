@@ -140,12 +140,14 @@ class NE16PWConv2DTileConstraint(TileConstraint):
         # pass; the value used here was 6, inherited verbatim from N-EUREKA whose PE array is 6x6.
         # On NE16 that misaligns every dimension that is a multiple of 3 but not of 6.
         if flatPixels and parseDict["dim_im_out_x"] > _NE16_SUBTILE_PIXELS:
-            # flat column: a job retires 9 pixels per subtile, so ask for tiles of a multiple of 9 pixels
+            # flat column: keep all pixels in one tile if it fits (the template packs any count into
+            # ceil(npix / 9) subtiles), else ask for tiles of a multiple of 9 pixels
+            tilerModel.addConstraint(outputHeightVar == outputHeightVar.Max(), strategy = PerformanceHint(priority = 3))
             tilerModel.addTileSizeDivisibleConstraint(parseDict,
                                                       "dim_im_out_x",
                                                       outputHeightVar,
                                                       _NE16_SUBTILE_PIXELS,
-                                                      strategy = PerformanceHint(priority = 3))
+                                                      strategy = PerformanceHint(priority = 2))
         elif parseDict["dim_im_out_x"] > _NE16_SUBTILE_OUTPUT_HW:
             tilerModel.addTileSizeDivisibleConstraint(parseDict,
                                                       "dim_im_out_x",
