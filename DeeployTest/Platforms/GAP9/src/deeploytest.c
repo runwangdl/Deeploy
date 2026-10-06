@@ -28,6 +28,26 @@
 #define SLAVESTACKSIZE 768
 #endif
 
+/* On-chip memory windows. HyperRAM/L3 (cl_ram_malloc) is NOT CPU-addressable, so a raw memcpy / CPU-deref of
+ * an L3 pointer faults on real silicon -- GVSoC models HyperRAM as flat RAM and hides it. The previous
+ * `>= 0x10000000` / `< 0x10000000` tests also matched HyperRAM. (Same as TrainDeeploy's harness.) */
+#define IS_L1(ptr) ((uint32_t)(ptr) >= 0x10000000u && (uint32_t)(ptr) < 0x10040000u)
+#define IS_L2(ptr) (((uint32_t)(ptr) >= 0x1C000000u && (uint32_t)(ptr) < 0x1C200000u) || IS_L1(ptr))
+
+/* Board operating point (the SDK boots at a low safe clock). 370 MHz needs 0.8 V. Override with -DFREQ_FC=... */
+#ifndef FREQ_FC
+#define FREQ_FC 370
+#endif
+#ifndef FREQ_CL
+#define FREQ_CL 370
+#endif
+#ifndef FREQ_PE
+#define FREQ_PE 370
+#endif
+#ifndef VOLTAGE
+#define VOLTAGE 800
+#endif
+
 #define CLUSTER_MAX_CORES 9
 PI_L1 uint8_t cluster_slave_stacks[SLAVESTACKSIZE * CLUSTER_MAX_CORES]
     __attribute__((aligned(16)));
@@ -124,6 +144,15 @@ int main(void) {
   if (pi_cluster_open(&cluster_dev))
     return -1;
 
+#ifdef __PLATFORM_BOARD__
+  pi_freq_set(PI_FREQ_DOMAIN_FC, FREQ_FC * 1000 * 1000);
+  pi_freq_set(PI_FREQ_DOMAIN_CL, FREQ_CL * 1000 * 1000);
+  pi_freq_set(PI_FREQ_DOMAIN_PERIPH, FREQ_PE * 1000 * 1000);
+  pi_pmu_voltage_set(PI_PMU_VOLTAGE_DOMAIN_CHIP, VOLTAGE);
+  printf("[FREQ] FC=%d CL=%d PE=%d Hz, %d mV\r\n", pi_freq_get(PI_FREQ_DOMAIN_FC), pi_freq_get(PI_FREQ_DOMAIN_CL),
+         pi_freq_get(PI_FREQ_DOMAIN_PERIPH), VOLTAGE);
+#endif
+
   mem_init();
 #ifndef NOFLASH
   open_fs();
@@ -141,7 +170,7 @@ int main(void) {
   printf("Initialized\r\n");
 #endif
   for (uint32_t buf = 0; buf < DeeployNetwork_num_inputs; buf++) {
-    if ((uint32_t)DeeployNetwork_inputs[buf] >= 0x10000000) {
+    if (IS_L2(DeeployNetwork_inputs[buf])) {
       memcpy(DeeployNetwork_inputs[buf], testInputVector[buf],
              DeeployNetwork_inputs_bytes[buf]);
     }
@@ -178,7 +207,7 @@ int main(void) {
   for (uint32_t buf = 0; buf < DeeployNetwork_num_outputs; buf++) {
     tot_tested += DeeployNetwork_outputs_bytes[buf] / sizeof(OUTPUTTYPE);
 
-    if ((uint32_t)DeeployNetwork_outputs[buf] < 0x10000000) {
+    if (!IS_L2(DeeployNetwork_outputs[buf])) {
       compbuf = pi_l2_malloc(DeeployNetwork_outputs_bytes[buf]);
       ram_read(compbuf, DeeployNetwork_outputs[buf],
                DeeployNetwork_outputs_bytes[buf]);
@@ -216,7 +245,7 @@ int main(void) {
         }
       }
     }
-    if ((uint32_t)DeeployNetwork_outputs[buf] < 0x10000000) {
+    if (!IS_L2(DeeployNetwork_outputs[buf])) {
       pi_l2_free(compbuf, DeeployNetwork_outputs_bytes[buf]);
     }
   }

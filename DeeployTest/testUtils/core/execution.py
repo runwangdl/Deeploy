@@ -83,6 +83,9 @@ def configure_cmake(config: DeeployTestConfig) -> None:
         f"-Dplatform={config.platform}",
         f"-DTESTNAME={config.test_name}",
         f"-B{config.build_dir}",
+        # the top-level CMakeLists picks the GAP9 SDK config from SIMULATOR (board -> sdk_board.config: board
+        # platform + UART printf); without it a "-s board" image was built for the gvsoc platform and hung on the EVK
+        f"-DSIMULATOR={config.simulator}",
     ]
 
     # Add GVSOC_INSTALL_DIR if available
