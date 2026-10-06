@@ -34,6 +34,12 @@
 #define IS_L1(ptr) ((uint32_t)(ptr) >= 0x10000000u && (uint32_t)(ptr) < 0x10040000u)
 #define IS_L2(ptr) (((uint32_t)(ptr) >= 0x1C000000u && (uint32_t)(ptr) < 0x1C200000u) || IS_L1(ptr))
 
+// Run gvsoc at the same operating point as the EVK. The SDK default (cluster 50 MHz) makes every PSRAM wait
+// ~7x cheaper in cycles: m2_anna_s0_b0static 65.0 M on gvsoc@default vs 107.8 M on gvsoc@370 MHz vs 108.8 M
+// on the EVK. -DGVSOC_DEFAULT_FREQ restores the old behaviour.
+#ifndef GVSOC_DEFAULT_FREQ
+#define GVSOC_SET_FREQ
+#endif
 /* Board operating point (the SDK boots at a low safe clock). 370 MHz needs 0.8 V. Override with -DFREQ_FC=... */
 #ifndef FREQ_FC
 #define FREQ_FC 370
@@ -144,7 +150,7 @@ int main(void) {
   if (pi_cluster_open(&cluster_dev))
     return -1;
 
-#ifdef __PLATFORM_BOARD__
+#if defined(__PLATFORM_BOARD__) || defined(GVSOC_SET_FREQ)
   pi_freq_set(PI_FREQ_DOMAIN_FC, FREQ_FC * 1000 * 1000);
   pi_freq_set(PI_FREQ_DOMAIN_CL, FREQ_CL * 1000 * 1000);
   pi_freq_set(PI_FREQ_DOMAIN_PERIPH, FREQ_PE * 1000 * 1000);
@@ -251,6 +257,17 @@ int main(void) {
   }
 
   printf("Runtime: %u cycles\r\n", total_cycles);
+  { // per-row checksums of named tensors (filled only by a patched Network.c, see patch_ck_named.py)
+    extern int32_t sdbg_ck_r[8][80] __attribute__((weak)); extern int32_t sdbg_ck_n __attribute__((weak));
+    if (&sdbg_ck_n) for (int k = 0; k < sdbg_ck_n; k++) {
+      printf("SDBGCKR%d", k); for (int r = 0; r < 80; r++) printf(" %ld", (long)sdbg_ck_r[k][r]); printf("\r\n");
+    }
+  }
+  { // per-node timestamps (filled only by a patched Network.c)
+    extern uint32_t sdbg_nt[] __attribute__((weak)); extern int32_t sdbg_nt_n __attribute__((weak));
+    extern const char *sdbg_nt_name[] __attribute__((weak));
+    if (&sdbg_nt_n) for (int k = 0; k < sdbg_nt_n; k++) printf("NT %d %s %u\r\n", k, sdbg_nt_name[k], sdbg_nt[k]);
+  }
   printf("Errors: %u out of %u \r\n", tot_err, tot_tested);
 
   return 0;

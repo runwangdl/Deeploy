@@ -522,7 +522,36 @@ class Tiler():
         for key in self.innerMemoryScheduler.memoryMap.keys():
             memoryMap[key] = [*self.innerMemoryScheduler.memoryMap[key], *self.outerMemoryScheduler.memoryMap[key]]
 
-        if self.memoryAllocStrategy == "MiniMalloc":
+        if self.memoryAllocStrategy == "MiniMalloc" and os.environ.get("DEEPLOY_MINIMALLOC_MULTILEVEL") == "1":
+            # Activations annotated to a non-default level (e.g. L2) live across nodes: allocate them by lifetime
+            # in [0, R) of that level, and every node's tile buffers in [R, capacity) (shifted by R).
+            log.debug(" - Solve Memory Allocation with MiniMalloc (multi-level)")
+            for memoryLevel in memoryMap.keys():
+                constantTensorOffset = self.outerMemoryScheduler.getConstantTensorOffset(ctxt, memoryLevel)
+                capacity = self.memoryHierarchy.memoryLevels[memoryLevel].size - constantTensorOffset
+                nInner = len(self.innerMemoryScheduler.memoryMap[memoryLevel])
+                if memoryLevel == self.memoryHierarchy._defaultMemoryLevel.name:
+                    memoryMap[memoryLevel][-1] = self.minimalloc(memoryMap[memoryLevel][-1], ctxt, None, capacity,
+                                                                 memoryLevel)
+                    reserved = 0
+                else:
+                    reserved = 0
+                    for idx in range(nInner, len(memoryMap[memoryLevel])):
+                        if len(memoryMap[memoryLevel][idx]) != 0:
+                            memoryMap[memoryLevel][idx] = self.minimalloc(memoryMap[memoryLevel][idx], ctxt, None,
+                                                                          capacity, memoryLevel)
+                            reserved = max([reserved] + [b._addrSpace[1] for b in memoryMap[memoryLevel][idx]])
+                    reserved = ((reserved + 63) // 64) * 64
+                for idx in range(nInner):
+                    memMap = memoryMap[memoryLevel][idx]
+                    if len(memMap) == 0 or memoryLevel == self.memoryHierarchy._defaultMemoryLevel.name:
+                        continue
+                    memoryMap[memoryLevel][idx] = self.minimalloc(memMap, ctxt, tilingSolution[idx].nodeConstraints[0],
+                                                                  capacity - reserved, memoryLevel)
+                    for b in memoryMap[memoryLevel][idx]:
+                        b._addrSpace = (b._addrSpace[0] + reserved, b._addrSpace[1] + reserved)
+            log.info(f" {SUCCESS_MARK} Memory allocation successful!")
+        elif self.memoryAllocStrategy == "MiniMalloc":
             log.debug(" - Solve Memory Allocation with MiniMalloc")
             for memoryLevel in memoryMap.keys():
                 constantTensorOffset = self.outerMemoryScheduler.getConstantTensorOffset(ctxt, memoryLevel)
@@ -1853,7 +1882,7 @@ class TilerDeployerWrapper(NetworkDeployerWrapper):
             # JUNGVI: Currently using MiniMalloc is only supported for layer-wise execution and all tensors in the default memory level.
             if self.tiler.memoryAllocStrategy == "MiniMalloc":
                 assert self.tiler.assertLayerWiseTiling(schedule), "Using MiniMalloc and DFT is not supported!"
-                assert self.tiler.assertUniformMemoryLevelAllocation(
+                assert os.environ.get("DEEPLOY_MINIMALLOC_MULTILEVEL") == "1" or self.tiler.assertUniformMemoryLevelAllocation(
                     self.ctxt, self.Platform.memoryHierarchy._defaultMemoryLevel.name
                 ), "All tensors have to be in the default memory level when using MiniMalloc!"
 

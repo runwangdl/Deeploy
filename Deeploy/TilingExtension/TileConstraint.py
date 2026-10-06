@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import copy
+import os
 from abc import abstractmethod
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -75,18 +76,25 @@ class TileConstraint():
 
     @staticmethod
     def sanitizeTilingSchedule(tilingSchedule: TilingSchedule) -> TilingSchedule:
+        # Inputs without a buffer at this level are already resident in the local memory (e.g. an activation
+        # annotated to L2 under an L3 tiling loop). Keep their per-tile rectangles so the code generation can
+        # still advance their pointer to each tile's position in the full tensor.
+        residentInputRects = getattr(tilingSchedule, "residentInputRects", {})
         for baseOffsetName, baseOffsetValue in tilingSchedule.inputBaseOffsets.copy().items():
             if baseOffsetValue == [None]:
+                residentInputRects[baseOffsetName] = [step[baseOffsetName] for step in tilingSchedule.inputLoadSchedule]
                 for step in tilingSchedule.inputLoadSchedule:
                     del step[baseOffsetName]
                 del tilingSchedule.inputBaseOffsets[baseOffsetName]
 
         for baseOffsetName, baseOffsetValue in tilingSchedule.outputBaseOffsets.copy().items():
             if baseOffsetValue == [None]:
+                residentInputRects[baseOffsetName] = [step[baseOffsetName] for step in tilingSchedule.outputLoadSchedule]
                 for step in tilingSchedule.outputLoadSchedule:
                     del step[baseOffsetName]
                 del tilingSchedule.outputBaseOffsets[baseOffsetName]
 
+        tilingSchedule.residentInputRects = residentInputRects  # inputs and outputs resident in the local memory
         return tilingSchedule
 
     @classmethod
@@ -141,9 +149,20 @@ class TileConstraint():
 
         targetIdx = memoryPath.index(targetMemLevel)
 
+        forcedTargetIdx = False
         if targetIdx == 0:
             # SCHEREMO: Watch out - this happens if inputs are in L(N+1) but outputs only in L(N)
             targetIdx = 1
+            forcedTargetIdx = True
+
+        # Output resident in an inner level (path starts below the outermost input level): the outer loop then
+        # iterates the innermost output cubes one by one, so the inner loop must take exactly one cube per call.
+        inputOuterLevels = {
+            next(iter(tc.memoryConstraints.keys())) for tc in tilingSolution.inputTensorMemoryConstraints.values()
+        }
+        residentOutputInner = (not forcedTargetIdx) and len(memoryPath) >= 2 and \
+            any(level != memoryPath[0] for level in inputOuterLevels) and \
+            all(level not in memoryPath or level == memoryPath[0] for level in inputOuterLevels)
 
         fullShape = ctxt.lookup(outVar).shape
         initialOffset = (0,) * len(fullShape)
@@ -160,6 +179,8 @@ class TileConstraint():
         for idxLen in solutionLengths:
             arrayOfCubes += [outputCubes[_idx:_idx + idxLen]]
             _idx += idxLen
+        if residentOutputInner and os.environ.get("DEEPLOY_MINIMALLOC_MULTILEVEL") == "1":
+            arrayOfCubes = [[cube] for cube in outputCubes]
 
         varReplacements = []
         tilingSchedules = []

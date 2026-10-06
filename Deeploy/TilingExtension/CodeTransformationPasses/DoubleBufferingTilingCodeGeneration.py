@@ -297,6 +297,38 @@ class DoubleBufferingTilingCodeGeneration(TilingCodeGeneration):
             egressFutures.add(future)
 
         # 4.2.
+        # 4.5) Inputs already resident in the local memory: no transfer, but the inner closure must see the
+        # pointer at this tile's position in the full tensor (otherwise every tile reads offset 0).
+        for tensorName, rectangles in getattr(tilingSchedule, "residentInputRects", {}).items():
+            residentBuffer = ctxt.lookup(operatorRepresentation[tensorName])
+            while isinstance(residentBuffer, _ReferenceBuffer):  # local reference -> the resident tensor itself
+                residentBuffer = ctxt.lookup(residentBuffer._referenceName)
+            fullShape = residentBuffer.shape
+            if any(len(rect.dims) != len(fullShape) for rect in rectangles):
+                continue  # broadcast parameters (e.g. per-channel requant tables): unchanged behaviour
+            # The inner (L1) closure addresses a resident tensor with the full-tensor strides and starts from the
+            # pointer it is given, so the pointer only has to be moved to the tile's first element.
+            typeWidth = residentBuffer._type.referencedType.typeWidth // 8
+            strides = stridesFromShape(fullShape)
+            byteOffsets = [calculateFlatOffset(rect.offset, strides) * typeWidth for rect in rectangles]
+            if all(o == 0 for o in byteOffsets):
+                continue
+            baseName = f"{residentBuffer.name}_residentBase"
+            offsetBuffer = self._hoistValues(ctxt, f'{tensorName}_residentOffset', byteOffsets)
+            setupStatements.append(
+                CodeSnippet(NodeTemplate("char *${base} = (char *)${reference};"), {
+                    "base": baseName,
+                    "reference": residentBuffer.name
+                }))
+            openLoopStatements.append(
+                CodeSnippet(
+                    NodeTemplate("${reference} = (${typeName} *)(${base} + ${offsets}[TILING_I]);"), {
+                        "reference": residentBuffer.name,
+                        "typeName": residentBuffer._type.referencedType.typeName,
+                        "base": baseName,
+                        "offsets": offsetBuffer.name
+                    }))
+
         openLoopStatements += self._switch(buffer_choices, "TILING_I")
 
         # 1. Initialize all futures

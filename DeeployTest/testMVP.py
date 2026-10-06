@@ -25,8 +25,8 @@ from Deeploy.EngineExtension.NetworkDeployers.EngineColoringDeployer import Engi
 from Deeploy.Logging import DEFAULT_LOGGER as log
 from Deeploy.MemoryLevelExtension.MemoryLevels import MemoryHierarchy, MemoryLevel
 from Deeploy.MemoryLevelExtension.NetworkDeployers.MemoryLevelDeployer import MemoryDeployerWrapper
-from Deeploy.MemoryLevelExtension.OptimizationPasses.MemoryLevelAnnotationPasses import AnnotateDefaultMemoryLevel, \
-    AnnotateIOMemoryLevel
+from Deeploy.MemoryLevelExtension.OptimizationPasses.MemoryLevelAnnotationPasses import AnnotateActivationMemoryLevel, \
+    AnnotateConstantMemoryLevel, AnnotateDefaultMemoryLevel, AnnotateIOMemoryLevel
 from Deeploy.Targets.Neureka.OptimizationPasses.MemoryLevelAnnotationPasses import AnnotateNeurekaWeightMemoryLevel
 from Deeploy.Targets.PULPOpen.Platform import PULPClusterEngine
 from Deeploy.TilingExtension.TilerExtension import TilerDeployerWrapper
@@ -104,10 +104,15 @@ def setupDeployer(graph: gs.Graph, memoryHierarchy: MemoryHierarchy, defaultTarg
     # Make platform memory-aware after mapDeployer because it requires the platform to be an instance of an unwrapped platform
     deployer.Platform = setupMemoryPlatform(deployer.Platform, memoryHierarchy, defaultTargetMemoryLevel)
 
-    memoryLevelAnnotationPasses = [
-        AnnotateIOMemoryLevel(defaultIoMemoryLevel.name),
-        AnnotateDefaultMemoryLevel(memoryHierarchy)
-    ]
+    memoryLevelAnnotationPasses = [AnnotateIOMemoryLevel(defaultIoMemoryLevel.name)]
+    # DEEPLOY_ACT_L2_MAX=<bytes>: with defaultMemLevel=L3, keep activations up to this size in L2 (weights stay in L3)
+    if os.environ.get("DEEPLOY_ACT_L2_MAX") and args.defaultMemLevel == "L3":
+        memoryLevelAnnotationPasses.append(AnnotateActivationMemoryLevel("L2", int(os.environ["DEEPLOY_ACT_L2_MAX"]),
+                                                                    os.environ.get("DEEPLOY_ACT_L2_RE", "")))
+    # DEEPLOY_CONST_L3_MIN=<bytes>: with defaultMemLevel=L2, constants of at least this size go to L3
+    if os.environ.get("DEEPLOY_CONST_L3_MIN") and args.defaultMemLevel == "L2":
+        memoryLevelAnnotationPasses.append(AnnotateConstantMemoryLevel("L3", int(os.environ["DEEPLOY_CONST_L3_MIN"])))
+    memoryLevelAnnotationPasses.append(AnnotateDefaultMemoryLevel(memoryHierarchy))
 
     if args.neureka_wmem:
         weightMemoryLevel = memoryHierarchy.memoryLevels["WeightMemory_SRAM"]
@@ -125,7 +130,8 @@ def setupDeployer(graph: gs.Graph, memoryHierarchy: MemoryHierarchy, defaultTarg
 
     if args.doublebuffer:
         assert args.defaultMemLevel in ["L3", "L2"]
-        if args.defaultMemLevel == "L3":
+        # DEEPLOY_DB_ONLY_L3=1: keep L1 single-buffered also when the default level is L2
+        if args.defaultMemLevel == "L3" or os.environ.get("DEEPLOY_DB_ONLY_L3") == "1":
             deployer = TilerDeployerWrapper(deployer, DBOnlyL3Tiler, testName = testIdentifier, workDir = args.dumpdir)
         else:
             deployer = TilerDeployerWrapper(deployer, DBTiler, testName = testIdentifier, workDir = args.dumpdir)
