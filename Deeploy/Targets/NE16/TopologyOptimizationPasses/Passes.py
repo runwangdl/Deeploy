@@ -191,10 +191,20 @@ def _nSubtiles(dims: Tuple[int, int]):
     return math.ceil(dims[0] / NE16_SPATIAL_SUBTILE) * math.ceil(dims[1] / NE16_SPATIAL_SUBTILE)
 
 
+def _siliconSafeWidth(option: Tuple[int, int]) -> bool:
+    # On the GAP9 EVK a 1x1 job whose W spans several 3-wide subtiles with a partial last one corrupts outputs of
+    # the first subtile (gvsoc does not model it). The pass maps the smaller factor to W: keep W a multiple of 3
+    # or below 3 (a single subtile). Measured: FEMBA in_proj 16x5 -> 3566 / 123200 wrong on the EVK.
+    w = min(option)
+    return w % NE16_SPATIAL_SUBTILE == 0 or w < NE16_SPATIAL_SUBTILE
+
+
 def _findLowestNumberOfSubtilesReshapeOptions(dim: int) -> List[Tuple[int, int]]:
     lowestNumberOfSubtiles = dim
     bestOptions: List[Tuple[int, int]] = [(dim, 1)]
     for option in _findAllReshapeOptions(dim):
+        if not _siliconSafeWidth(option):
+            continue
         nSubtiles = _nSubtiles(option)
         if nSubtiles < lowestNumberOfSubtiles:
             lowestNumberOfSubtiles = nSubtiles

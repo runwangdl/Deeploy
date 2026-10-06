@@ -14,12 +14,14 @@ NUM_CORES = 8
 
 
 def pixelGrid(P: int) -> Tuple[int, int]:
-    """GH x GW pixel grid for a head of P channels: GH a multiple of 3 (NE16 3x3 spatial subtiles),
+    """GH x GW pixel grid for a head of P channels: GH and GW multiples of 3 (NE16 3x3 spatial subtiles),
     fewest subtiles first, then least padding."""
     best = None
     GH = 3
     while GH <= 3 * ((P + 2) // 3) + 3:
         GW = -(-P // GH)
+        GW = 3 * (-(-GW // 3))   # whole 3x3 subtiles in W too: on the GAP9 EVK a partial last W subtile corrupts the
+                                 # last column of the first subtile (gvsoc does not model it); same subtile count
         key = ((GH // 3) * (-(-GW // 3)), GH * GW - P, GH)
         if best is None or key < best[0]:
             best = (key, GH, GW)

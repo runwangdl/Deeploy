@@ -122,6 +122,16 @@ class NE16PWConv2DTileConstraint(TileConstraint):
         tilerModel.addConstraint((inputHeightVar % strides[0]) == 0)
         tilerModel.addConstraint((inputWidthVar % strides[1]) == 0)
 
+        # Silicon rule (GAP9 EVK, not modelled by gvsoc): a 1x1 job whose H or W spans several 3-wide subtiles with
+        # a partial last one corrupts outputs of the first subtile (FEMBA in_proj: 3566 / 123200 wrong; SSD kernel
+        # grids 3x11 and 11x3 wrong, 3x12 / 33x1 right). So every job's H and W must be a multiple of 3 or < 3:
+        # tile size a multiple of 3 and the remainder tile at most 2 (always feasible with tile 3).
+        for dimName, dimVar in (("dim_im_out_x", outputHeightVar), ("dim_im_out_y", outputWidthVar)):
+            if parseDict[dimName] >= _NE16_SUBTILE_OUTPUT_HW:
+                rem = tilerModel.addTileSizeDivisibleConstraint(parseDict, dimName, dimVar, _NE16_SUBTILE_OUTPUT_HW,
+                                                                prefix = "silicon_")
+                tilerModel.addConstraint(rem <= _NE16_SUBTILE_OUTPUT_HW - 1)
+
         # Align the spatial tile with NE16's hardware subtiling. NE16 emits a 3x3 output patch per
         # pass; the value used here was 6, inherited verbatim from N-EUREKA whose PE array is 6x6.
         # On NE16 that misaligns every dimension that is a multiple of 3 but not of 6.
