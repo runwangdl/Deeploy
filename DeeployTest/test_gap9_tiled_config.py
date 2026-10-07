@@ -29,6 +29,7 @@ L2_SINGLEBUFFER_KERNELS = {
     "Kernels/FP32/ReLU": [2000],
     "Kernels/FP32/Sigmoid": [2000],
     "Kernels/FP32/Tanh": [2000],
+    "Kernels/FP32/Slice/Offset": [2000],
     "Kernels/FP32/Reshape/SkipConnection": [1400],
     "Kernels/FP32/Softmax/Regular": [4000],
     "Kernels/FP32/Transpose": [2000],

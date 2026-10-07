@@ -26,6 +26,8 @@ This file contains the changelog for the Deeploy project. The changelog is divid
 ### Added
 - FP32 `Sigmoid` and `Tanh` kernels and tiling-ready bindings for GAP9 and PULPOpen (cluster-parallel, `UnaryTileConstraint`); FP32 `Tanh` for Generic
 - Elementwise FP32 `Mul` on GAP9/PULPOpen/Generic (the template was scalar-only; it now switches on `sizeB`), test `Kernels/FP32/Mul/Elementwise`
+- FP32 `Slice` on GAP9/Generic accepts int16/int32 index constants (starts >= 128 failed to bind); regression test `Kernels/FP32/Slice/Offset`
+- `DEEPLOY_TEST_MAIN` CMake cache variable on the GAP9 test platform to swap the test main for a custom harness
 - tests for Regular and DW Conv2D with 3x3 kernel
 - Neureka's engine-aware DW lowering pass `NeurekaNCHWtoNHWCDwConvPass`
 - XDNA2 (AIE2p) platform beta: first MLIR backend for Deeploy, targeting AMD/Xilinx NPU2 with a single BF16 Add kernel
@@ -66,6 +68,7 @@ This file contains the changelog for the Deeploy project. The changelog is divid
 - Skip emitting duplicate `testInputVector` data for inputs placed in L3 (loaded at runtime from the readfs hex instead), reducing test binary size
 
 ### Fixed
+- Tiled `Slice` (PULPOpen/GAP9) added `starts` a second time when the whole slice fit in one tile: the input tile is already anchored at the slice start, but `data_in_size` was constant-folded so the template missed the tiled fast path. The constraint now emits `input_cube_anchored`.
 - Fix Neureka's output-channels subtile size (in ConvTemplate) and Dense/DW/PW tile constraints
 - in `NetworkContainer._createIOBindings`, set `_live = True` on network input and output buffers so that any buffer aliasing a network I/O tensor is no longer deallocated while the I/O tensor is still in use.
 - Fix latent bug in `VariableBuffer.has_live_aliases` where `visited` variable was storing buffer names as a set of characters instead of strings.

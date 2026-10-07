@@ -8,10 +8,14 @@ set(ProjectId ${TESTNAME})
 
 set(${SDKCONFIG_FILE} ${CMAKE_CURRENT_LIST_DIR}/sdk.config)
 
+# The test main can be swapped for a custom harness (e.g. a recurrent world-model loop that feeds
+# outputs back into inputs) with -D DEEPLOY_TEST_MAIN=/abs/path/main.c. Note the value is cached in
+# build_master; pass the default path again to restore the standard harness.
+set(DEEPLOY_TEST_MAIN "${CMAKE_CURRENT_LIST_DIR}/src/deeploytest.c" CACHE FILEPATH "Test main source")
 file(GLOB_RECURSE SOURCES
     src/CycleCounter.c
-    src/deeploytest.c
 )
+list(APPEND SOURCES ${DEEPLOY_TEST_MAIN})
 
 add_deeploy_executable(${ProjectId} EXCLUDE_FROM_ALL ${SOURCES})
 # add_executable(${ProjectId} ${SOURCES})

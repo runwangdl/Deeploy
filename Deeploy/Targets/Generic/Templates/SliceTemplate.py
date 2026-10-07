@@ -58,6 +58,9 @@ class _SliceTemplate(NodeTemplate):
         operatorRepresentation['ends'] = ends
         operatorRepresentation['steps'] = steps
         operatorRepresentation['data_in_size'] = np.prod(shape)
+        # 0 = kernel sees the whole input (untiled); the tiling constraint overrides it with 1 when the
+        # input tile already starts at `starts` (see SliceConstraint.serializeTilingSolution).
+        operatorRepresentation.setdefault('input_cube_anchored', 0)
 
         return ctxt, operatorRepresentation, []
 

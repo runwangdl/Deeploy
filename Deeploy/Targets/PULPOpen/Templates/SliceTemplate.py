@@ -26,7 +26,12 @@ rowBytes = rowElems * elemBytes
 
 # Parallel fast paths: forward only for tiled slices (data_in_size is a per-tile ref); the row-reversal path
 # also for untiled slices (FEMBA's sequence flips stay untiled and ran the sequential loop on one core, ~9 cycles/B).
-forwardPath = isinstance(data_in_size, str) and all(int(s) == 1 for s in steps)
+# Tiled flow: the input tile is anchored at the slice start, so the slice is a plain copy of
+# data_in_size elements. data_in_size is a per-tile symbol when tiles differ, or a folded constant when
+# there is a single tile; input_cube_anchored (1 in the tiled flow, 0 untiled) covers the latter case,
+# where the old `isinstance(data_in_size, str)` test wrongly fell back to the offset path and added
+# `starts` a second time (RSSM GRU gate slices [128:256] and [256:384] came out garbage).
+forwardPath = (isinstance(data_in_size, str) or int(input_cube_anchored) == 1) and all(int(s) == 1 for s in steps)
 reversePath = all(int(s) == -1 for s in steps) and len(axes) == 1 and int(axes[0]) == 1 and \
     int(starts[0]) in (-1, int(data_in_shape[1]) - 1) and (int(ends[0]) == -1 or int(ends[0]) <= -int(data_in_shape[1]) - 1)
 

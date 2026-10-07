@@ -132,11 +132,12 @@ GAP9SliceBindings = [
     NodeBinding(
         SliceChecker([
             PointerClass(type),
-            PointerClass(uint8_t),
-            PointerClass(uint8_t),
-            PointerClass(uint8_t),
-            PointerClass(uint8_t)
+            PointerClass(int_type),
+            PointerClass(int_type),
+            PointerClass(int_type),
+            PointerClass(int_type)
         ], [PointerClass(type)]), SliceTemplate.referenceTemplate, GAP9Transformer) for type in FloatDataTypes
+    for int_type in (uint8_t, int8_t, int16_t, int32_t)  # the template reads the index constants' values; only the checker needs a type wide enough for them
 ] + [
     NodeBinding(
         SliceChecker([

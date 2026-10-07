@@ -58,6 +58,7 @@ KERNEL_TESTS = [
     "Kernels/FP32/Reshape/SkipConnection",
     "Kernels/FP32/Sigmoid",
     "Kernels/FP32/Tanh",
+    "Kernels/FP32/Slice/Offset",
     "Kernels/FP32/Sqrt",
     "Kernels/FP32/Sub",
     "Kernels/FP32/Swish",

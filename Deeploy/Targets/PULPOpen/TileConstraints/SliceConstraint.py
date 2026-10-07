@@ -8,7 +8,7 @@ import numpy as np
 from ortools.constraint_solver.pywrapcp import IntVar
 
 from Deeploy.AbstractDataTypes import PointerClass
-from Deeploy.CommonExtensions.DataTypes import uint16_t
+from Deeploy.CommonExtensions.DataTypes import uint8_t, uint16_t
 from Deeploy.DeeployTypes import NetworkContext, OperatorRepresentation
 from Deeploy.TilingExtension.MemoryConstraints import NodeMemoryConstraint
 from Deeploy.TilingExtension.TileConstraint import TileConstraint
@@ -124,6 +124,10 @@ class SliceTileConstraint(TileConstraint):
         # ~~~~~ SEE ISSUE #134: https://github.com/pulp-platform/Deeploy/issues/134 ~~~~~
         # Freeze tiling input and output tiling for now
         replacements = {
+            # The tiled input cube is anchored at the slice start (computeInputCubeFromOutputCube), so the
+            # kernel must not add `starts` again. Uniform across tiles -> folded to a constant 1 in the
+            # operator representation by minimizeVariableReplacement; the untiled default is 0.
+            "input_cube_anchored": [1] * len(outputCubes),
             # "data_in_shape": [],
             # "data_out_shape": [],
             # "starts": [[
@@ -149,6 +153,7 @@ class SliceTileConstraint(TileConstraint):
             # "starts": PointerClass(uint16_t),
             # "ends": PointerClass(uint16_t),
             "data_in_size": PointerClass(uint16_t),
+            "input_cube_anchored": PointerClass(uint8_t),
         }
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
