@@ -14,7 +14,7 @@ from Deeploy.Targets.GAP9.Bindings import GAP9AddBindings, GAP9ConcatBindings, G
     GAP9FloatConv2DBindings, GAP9FloatDWConv2DBindings, GAP9FloatGELUBinding, GAP9FloatGEMMBindings, \
     GAP9GatherBindings, GAP9iHardswishBindings, GAP9iRMSNormBindings, GAP9RMSNormI32Bindings, GAP9iRQSGELUBindings, GAP9LayernormBinding, \
     GAP9MatMulBindings, GAP9MaxPool2DBindings, GAP9MulBindings, GAP9NE16GEMMInt32Bindings, GAP9NE16RQSGEMMBindings, \
-    GAP9QuantBindings, GAP9ReduceSumBindings, GAP9ReluBinding, GAP9ReshapeBindings, GAP9RQAddBindings, \
+    GAP9QuantBindings, GAP9ReduceSumBindings, GAP9ReluBinding, GAP9SigmoidBinding, GAP9TanhBinding, GAP9ReshapeBindings, GAP9RQAddBindings, \
     GAP9RQSBindings, GAP9RQSConv2DBindings, GAP9RQSDWConv2DBindings, GAP9RQSGEMMBindings, GAP9RQSiHardswishBindings, \
     GAP9RQSMatrixVecBindings, GAP9RQSTallGEMMBindings, GAP9SGDBindings, GAP9SoftmaxBindings, \
     GAP9SoftmaxCrossEntropyLossBindings, GAP9SoftmaxCrossEntropyLossGradBindings, GAP9SoftmaxGradBindings, \
@@ -24,7 +24,7 @@ from Deeploy.Targets.Generic.TileConstraints.AddTileConstraint import AddTileCon
 from Deeploy.Targets.GAP9.Bindings import GAP9AddBindings, GAP9ConcatBindings, GAP9FloatConv2DBindings, \
     GAP9FloatDWConv2DBindings, GAP9FloatGELUBinding, GAP9FloatGEMMBindings, GAP9GatherBindings, \
     GAP9iHardswishBindings, GAP9iLayernormBindings, GAP9iRMSNormBindings, GAP9iRQSGELUBindings, GAP9LayernormBinding, \
-    GAP9MatMulBindings, GAP9MaxPool2DBindings, GAP9MulBindings, GAP9ReduceMeanBindings, GAP9ReduceSumBindings, GAP9ReluBinding, \
+    GAP9MatMulBindings, GAP9MaxPool2DBindings, GAP9MulBindings, GAP9ReduceMeanBindings, GAP9ReduceSumBindings, GAP9ReluBinding, GAP9SigmoidBinding, GAP9TanhBinding, \
     GAP9ReshapeBindings, GAP9RQAddBindings, GAP9RQSBindings, GAP9UniformRQS_s32Bindings, \
     GAP9RQSConv2DBindings, \
     GAP9RQSDWConv2DBindings, GAP9RQSGEMMBindings, GAP9RQSiHardswishBindings, GAP9RQSMatrixVecBindings, \
@@ -156,6 +156,12 @@ GAP9iRQSGELUTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9iRQ
 
 GAP9MulTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = GAP9MulBindings,
                                                      tileConstraint = MulTileConstraint())
+
+GAP9SigmoidTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = [GAP9SigmoidBinding],
+                                                         tileConstraint = UnaryTileConstraint())
+
+GAP9TanhTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = [GAP9TanhBinding],
+                                                      tileConstraint = UnaryTileConstraint())
 
 GAP9ReluTilingReadyBindings = TilingReadyNodeBindings(nodeBindings = [GAP9ReluBinding],
                                                       tileConstraint = UnaryTileConstraint())

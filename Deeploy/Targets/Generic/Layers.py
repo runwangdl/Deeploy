@@ -761,6 +761,13 @@ class SigmoidLayer(ONNXLayer):
         return self.mapper.parser.operatorRepresentation['size'] * 4
 
 
+class TanhLayer(ONNXLayer):
+
+    def computeOps(self):
+        # tanh(x) = (exp(2x) - 1) / (exp(2x) + 1): mul, exp, sub, add, div
+        return self.mapper.parser.operatorRepresentation['size'] * 5
+
+
 class SwishLayer(ONNXLayer):
 
     def computeOps(self):

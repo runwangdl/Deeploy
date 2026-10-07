@@ -62,6 +62,7 @@
 #include "kernel/RequantShift.h"
 #include "kernel/SILU.h"
 #include "kernel/Sigmoid.h"
+#include "kernel/Tanh.h"
 #include "kernel/Softmax.h"
 #include "kernel/Sqrt.h"
 #include "kernel/Swish.h"

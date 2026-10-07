@@ -3035,6 +3035,12 @@ class SigmoidParser(UnaryElementWiseParser):
         return super().parseNode(node) and node.op == 'Sigmoid'
 
 
+class TanhParser(UnaryElementWiseParser):
+
+    def parseNode(self, node: gs.Node) -> bool:
+        return super().parseNode(node) and node.op == 'Tanh'
+
+
 class SwishParser(UnaryElementWiseParser):
 
     def parseNode(self, node: gs.Node) -> bool:

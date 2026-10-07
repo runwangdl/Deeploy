@@ -11,6 +11,8 @@ DEFAULT_SEARCH_STRATEGY = "random-max"
 
 L2_SINGLEBUFFER_KERNELS = {
     "Kernels/FP32/ReLU": [2000],
+    "Kernels/FP32/Sigmoid": [2000],
+    "Kernels/FP32/Tanh": [2000],
     "Kernels/FP32/Softmax/Regular": [4000],
     "Kernels/FP32/Add/Large": [220000],
     "Kernels/FP32/Conv/DW_2D_Bias": [7200],
@@ -23,6 +25,7 @@ L2_SINGLEBUFFER_KERNELS = {
     "Kernels/FP32/MatMul": [2000],
     "Kernels/FP32/MaxPool/Regular_2D": [2000],
     "Kernels/FP32/Mul/Regular": [2000],
+    "Kernels/FP32/Mul/Elementwise": [2000],
     "Kernels/FP32/LayerNorm": [2000],
     "Kernels/FP32/ReduceMean/KeepDims/Add_ReduceMean": [8000],
     "Kernels/FP32/ReduceMean/KeepDims/Add_ReduceMean_Add": [8000],
@@ -59,6 +62,8 @@ L2_SINGLEBUFFER_KERNELS = {
 
 L2_DOUBLEBUFFER_KERNELS = {
     "Kernels/FP32/ReLU": [20],
+    "Kernels/FP32/Sigmoid": [20],
+    "Kernels/FP32/Tanh": [20],
     "Kernels/FP32/Softmax/Regular": [8000],
     "Kernels/FP32/Conv/DW_2D_Bias": [10000],
     "Kernels/FP32/Conv/DW_2D_NoBias": [9800],
@@ -70,6 +75,7 @@ L2_DOUBLEBUFFER_KERNELS = {
     "Kernels/FP32/MatMul": [5000],
     "Kernels/FP32/MaxPool/Regular_2D": [5000],
     "Kernels/FP32/Mul/Regular": [2000],
+    "Kernels/FP32/Mul/Elementwise": [2000],
     "Kernels/FP32/LayerNorm": [2000],
     "Kernels/FP32/ReduceMean/KeepDims/Add_ReduceMean": [8000],
     "Kernels/FP32/ReduceMean/KeepDims/Add_ReduceMean_Add": [8000],

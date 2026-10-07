@@ -24,6 +24,8 @@ This file contains the changelog for the Deeploy project. The changelog is divid
 - Add SoCDAML Part III: hands-on lab for adding a new int8 operator [#194](https://github.com/pulp-platform/Deeploy/pull/194)
 
 ### Added
+- FP32 `Sigmoid` and `Tanh` kernels and tiling-ready bindings for GAP9 and PULPOpen (cluster-parallel, `UnaryTileConstraint`); FP32 `Tanh` for Generic
+- Elementwise FP32 `Mul` on GAP9/PULPOpen/Generic (the template was scalar-only; it now switches on `sizeB`), test `Kernels/FP32/Mul/Elementwise`
 - tests for Regular and DW Conv2D with 3x3 kernel
 - Neureka's engine-aware DW lowering pass `NeurekaNCHWtoNHWCDwConvPass`
 - XDNA2 (AIE2p) platform beta: first MLIR backend for Deeploy, targeting AMD/Xilinx NPU2 with a single BF16 Add kernel

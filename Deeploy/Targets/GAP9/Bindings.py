@@ -24,7 +24,7 @@ from Deeploy.Targets.GAP9.Templates import GAP9SDKDequantQuantTemplate, NE16GEMM
 # Import templates from PULPOpen and Generic
 from Deeploy.Targets.Generic.Templates import AddTemplate, ConcatTemplate, DequantTemplate, FloatReduceMeanTemplate, \
     FloatReduceSumTemplate, GatherTemplate, RQSiGELUTemplate, SliceTemplate, iHardswishTemplate
-from Deeploy.Targets.Generic.TypeCheckers import AddChecker, ConcatChecker, ConvChecker, DequantChecker, \
+from Deeploy.Targets.Generic.TypeCheckers import DummyChecker, AddChecker, ConcatChecker, ConvChecker, DequantChecker, \
     GatherChecker, GELUChecker, GEMMChecker, HardswishChecker, LayerNormChecker, MatMulChecker, MulChecker, \
     QuantChecker, ReduceMeanChecker, ReduceSumChecker, ReluChecker, ReshapeChecker, RQAddChecker, \
     RQHardswishChecker, SGDChecker, SILUChecker, SliceChecker, SoftmaxChecker, SoftmaxCrossEntropyLossChecker, \
@@ -43,7 +43,7 @@ from Deeploy.Targets.GAP9.Templates import Mamba3ScanTemplate, SelectiveScanI16T
 from Deeploy.Targets.PULPOpen.Templates import ConvTemplate, DMASliceTemplate, FloatAddTemplate, FloatConvTemplate, \
     IntAddTemplate, \
     FloatGELUTemplate, FloatGemmTemplate, FloatLayernormTemplate, FloatMatMulTemplate, FloatMaxPoolTemplate, \
-    FloatMulTemplate, FloatReduceMeanTemplate, FloatReluTemplate, FloatSoftmaxTemplate, GEMMTemplate, \
+    FloatMulTemplate, FloatReduceMeanTemplate, FloatReluTemplate, FloatSigmoidTemplate, FloatTanhTemplate, FloatSoftmaxTemplate, GEMMTemplate, \
     MatrixVectorTemplate, MaxPoolTemplate, \
     MulTemplate, ReduceMeanTemplate, ReduceSumTemplate, RequantShiftTemplate, ReshapeTemplate, RQAddTemplate, \
     RQSiHardswishTemplate, \
@@ -493,6 +493,12 @@ GAP9MulBindings = [
     NodeBinding(MulChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
                 FloatMulTemplate.referenceTemplate, GAP9Transformer)
 ]
+
+GAP9SigmoidBinding = NodeBinding(DummyChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
+                                 FloatSigmoidTemplate.referenceTemplate, GAP9Transformer)
+
+GAP9TanhBinding = NodeBinding(DummyChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
+                              FloatTanhTemplate.referenceTemplate, GAP9Transformer)
 
 GAP9ReluBinding = NodeBinding(ReluChecker([PointerClass(float32_t)], [PointerClass(float32_t)]),
                               FloatReluTemplate.referenceTemplate, GAP9Transformer)
