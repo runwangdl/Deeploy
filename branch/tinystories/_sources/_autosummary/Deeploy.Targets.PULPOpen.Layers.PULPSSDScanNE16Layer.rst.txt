@@ -1,0 +1,47 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.Layers.PULPSSDScanNE16Layer
+====================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.Layers
+
+.. autoclass:: PULPSSDScanNE16Layer
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~PULPSSDScanNE16Layer.__init__
+      ~PULPSSDScanNE16Layer.bind
+      ~PULPSSDScanNE16Layer.broadcast
+      ~PULPSSDScanNE16Layer.codeTransform
+      ~PULPSSDScanNE16Layer.computeOps
+      ~PULPSSDScanNE16Layer.computeShapes
+      ~PULPSSDScanNE16Layer.discardCurrentMapper
+      ~PULPSSDScanNE16Layer.generate
+      ~PULPSSDScanNE16Layer.parse
+      ~PULPSSDScanNE16Layer.resetDiscardedMappers
+      ~PULPSSDScanNE16Layer.typeCheck
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~PULPSSDScanNE16Layer.maps
+      ~PULPSSDScanNE16Layer.mapper
+      ~PULPSSDScanNE16Layer.discardedMappers
+      ~PULPSSDScanNE16Layer.node
+   
+   

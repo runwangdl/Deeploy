@@ -1,0 +1,41 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.TypeCheckers.PULPMamba3ScanChecker
+===========================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.TypeCheckers
+
+.. autoclass:: PULPMamba3ScanChecker
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~PULPMamba3ScanChecker.__init__
+      ~PULPMamba3ScanChecker.annotateDict
+      ~PULPMamba3ScanChecker.checkOutputType
+      ~PULPMamba3ScanChecker.signature
+      ~PULPMamba3ScanChecker.typeCheck
+      ~PULPMamba3ScanChecker.typeCheckNodeInputs
+      ~PULPMamba3ScanChecker.typeInferGlobalCtxt
+      ~PULPMamba3ScanChecker.typeInferOutput
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~PULPMamba3ScanChecker.typeDict
+   
+   

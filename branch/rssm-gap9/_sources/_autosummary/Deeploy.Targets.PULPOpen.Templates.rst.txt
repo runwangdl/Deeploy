@@ -1,0 +1,78 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.Templates
+==================================
+
+.. automodule:: Deeploy.Targets.PULPOpen.Templates
+
+   
+   
+   
+
+   
+   
+   
+
+   
+   
+   
+
+   
+   
+   
+
+
+
+.. rubric:: Modules
+
+.. autosummary::
+   :toctree:
+   :template: custom-module-template.rst
+   :recursive:
+
+   AllocateTemplate
+   ConvTemplate
+   DMASliceTemplate
+   DequantTemplate
+   FloatAddTemplate
+   FloatConvTemplate
+   FloatGELUTemplate
+   FloatGemmTemplate
+   FloatLayernormTemplate
+   FloatMatMulTemplate
+   FloatMaxPoolTemplate
+   FloatMulTemplate
+   FloatReduceMeanTemplate
+   FloatReluTemplate
+   FloatSigmoidTemplate
+   FloatSoftmaxTemplate
+   FloatTanhTemplate
+   FreeTemplate
+   GEMMTemplate
+   IntAddTemplate
+   MatrixVectorTemplate
+   MaxPoolTemplate
+   MulTemplate
+   QuantTemplate
+   RMSNormI32Template
+   RQAddTemplate
+   RQSiHardswishTemplate
+   ReduceMeanTemplate
+   ReduceSumTemplate
+   RequantShiftTemplate
+   ReshapeTemplate
+   SGDTemplate
+   SILUTemplate
+   SelectiveScanTemplate
+   SliceTemplate
+   SoftmaxCrossEntropyLossTemplate
+   SoftplusTemplate
+   TallGEMMTemplate
+   TransposeTemplate
+   UniformRequantShiftTemplate
+   iLayernormTemplate
+   iRMSNormTemplate
+   iSoftmaxTemplate
+

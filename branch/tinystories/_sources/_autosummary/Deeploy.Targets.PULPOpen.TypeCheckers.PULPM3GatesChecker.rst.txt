@@ -1,0 +1,41 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.TypeCheckers.PULPM3GatesChecker
+========================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.TypeCheckers
+
+.. autoclass:: PULPM3GatesChecker
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~PULPM3GatesChecker.__init__
+      ~PULPM3GatesChecker.annotateDict
+      ~PULPM3GatesChecker.checkOutputType
+      ~PULPM3GatesChecker.signature
+      ~PULPM3GatesChecker.typeCheck
+      ~PULPM3GatesChecker.typeCheckNodeInputs
+      ~PULPM3GatesChecker.typeInferGlobalCtxt
+      ~PULPM3GatesChecker.typeInferOutput
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~PULPM3GatesChecker.typeDict
+   
+   

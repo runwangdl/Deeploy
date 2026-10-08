@@ -1,0 +1,33 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.Templates.SoftplusTemplate.PULPSoftplusTemplate
+========================================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.Templates.SoftplusTemplate
+
+.. autoclass:: PULPSoftplusTemplate
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~PULPSoftplusTemplate.__init__
+      ~PULPSoftplusTemplate.alignToContext
+      ~PULPSoftplusTemplate.computeTransientBuffersSize
+      ~PULPSoftplusTemplate.generate
+      ~PULPSoftplusTemplate.hoistTransientBuffers
+      ~PULPSoftplusTemplate.internalSize
+   
+   
+
+   
+   
+   

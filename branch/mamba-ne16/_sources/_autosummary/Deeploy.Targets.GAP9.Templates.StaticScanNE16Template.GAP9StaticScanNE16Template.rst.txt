@@ -1,0 +1,33 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.GAP9.Templates.StaticScanNE16Template.GAP9StaticScanNE16Template
+================================================================================
+
+.. currentmodule:: Deeploy.Targets.GAP9.Templates.StaticScanNE16Template
+
+.. autoclass:: GAP9StaticScanNE16Template
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~GAP9StaticScanNE16Template.__init__
+      ~GAP9StaticScanNE16Template.alignToContext
+      ~GAP9StaticScanNE16Template.computeTransientBuffersSize
+      ~GAP9StaticScanNE16Template.generate
+      ~GAP9StaticScanNE16Template.hoistTransientBuffers
+      ~GAP9StaticScanNE16Template.internalSize
+   
+   
+
+   
+   
+   

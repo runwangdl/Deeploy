@@ -1,0 +1,41 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.TypeCheckers.PULPRMSNormI32Checker
+===========================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.TypeCheckers
+
+.. autoclass:: PULPRMSNormI32Checker
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~PULPRMSNormI32Checker.__init__
+      ~PULPRMSNormI32Checker.annotateDict
+      ~PULPRMSNormI32Checker.checkOutputType
+      ~PULPRMSNormI32Checker.signature
+      ~PULPRMSNormI32Checker.typeCheck
+      ~PULPRMSNormI32Checker.typeCheckNodeInputs
+      ~PULPRMSNormI32Checker.typeInferGlobalCtxt
+      ~PULPRMSNormI32Checker.typeInferOutput
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~PULPRMSNormI32Checker.typeDict
+   
+   

@@ -1,0 +1,6 @@
+Deeploy.Targets.GAP9.Templates.SSDScanNE16Template.pixelGrid
+============================================================
+
+.. currentmodule:: Deeploy.Targets.GAP9.Templates.SSDScanNE16Template
+
+.. autofunction:: pixelGrid

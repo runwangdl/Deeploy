@@ -1,0 +1,42 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.TileConstraints.SSDScanNE16TileConstraint.SSDScanNE16TileConstraint
+============================================================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.TileConstraints.SSDScanNE16TileConstraint
+
+.. autoclass:: SSDScanNE16TileConstraint
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~SSDScanNE16TileConstraint.__init__
+      ~SSDScanNE16TileConstraint.addGeometricalConstraint
+      ~SSDScanNE16TileConstraint.addPolicyConstraint
+      ~SSDScanNE16TileConstraint.constructSymbolicNodeRep
+      ~SSDScanNE16TileConstraint.extractBaseAddr
+      ~SSDScanNE16TileConstraint.getBaseAddr
+      ~SSDScanNE16TileConstraint.sanitizeTilingSchedule
+      ~SSDScanNE16TileConstraint.serializeTilingSolution
+      ~SSDScanNE16TileConstraint.wrapTilingSolution
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~SSDScanNE16TileConstraint.HEAD_TILE_MAX
+   
+   

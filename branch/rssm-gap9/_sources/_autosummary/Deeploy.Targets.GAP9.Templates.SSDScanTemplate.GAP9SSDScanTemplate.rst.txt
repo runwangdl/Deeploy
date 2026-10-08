@@ -1,0 +1,33 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.GAP9.Templates.SSDScanTemplate.GAP9SSDScanTemplate
+==================================================================
+
+.. currentmodule:: Deeploy.Targets.GAP9.Templates.SSDScanTemplate
+
+.. autoclass:: GAP9SSDScanTemplate
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~GAP9SSDScanTemplate.__init__
+      ~GAP9SSDScanTemplate.alignToContext
+      ~GAP9SSDScanTemplate.computeTransientBuffersSize
+      ~GAP9SSDScanTemplate.generate
+      ~GAP9SSDScanTemplate.hoistTransientBuffers
+      ~GAP9SSDScanTemplate.internalSize
+   
+   
+
+   
+   
+   

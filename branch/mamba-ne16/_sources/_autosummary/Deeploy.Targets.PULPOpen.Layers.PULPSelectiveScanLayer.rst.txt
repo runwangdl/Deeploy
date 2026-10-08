@@ -1,0 +1,47 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.Layers.PULPSelectiveScanLayer
+======================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.Layers
+
+.. autoclass:: PULPSelectiveScanLayer
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~PULPSelectiveScanLayer.__init__
+      ~PULPSelectiveScanLayer.bind
+      ~PULPSelectiveScanLayer.broadcast
+      ~PULPSelectiveScanLayer.codeTransform
+      ~PULPSelectiveScanLayer.computeOps
+      ~PULPSelectiveScanLayer.computeShapes
+      ~PULPSelectiveScanLayer.discardCurrentMapper
+      ~PULPSelectiveScanLayer.generate
+      ~PULPSelectiveScanLayer.parse
+      ~PULPSelectiveScanLayer.resetDiscardedMappers
+      ~PULPSelectiveScanLayer.typeCheck
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~PULPSelectiveScanLayer.maps
+      ~PULPSelectiveScanLayer.mapper
+      ~PULPSelectiveScanLayer.discardedMappers
+      ~PULPSelectiveScanLayer.node
+   
+   

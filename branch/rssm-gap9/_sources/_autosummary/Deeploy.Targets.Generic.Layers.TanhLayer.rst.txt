@@ -1,0 +1,47 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.Generic.Layers.TanhLayer
+========================================
+
+.. currentmodule:: Deeploy.Targets.Generic.Layers
+
+.. autoclass:: TanhLayer
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~TanhLayer.__init__
+      ~TanhLayer.bind
+      ~TanhLayer.broadcast
+      ~TanhLayer.codeTransform
+      ~TanhLayer.computeOps
+      ~TanhLayer.computeShapes
+      ~TanhLayer.discardCurrentMapper
+      ~TanhLayer.generate
+      ~TanhLayer.parse
+      ~TanhLayer.resetDiscardedMappers
+      ~TanhLayer.typeCheck
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~TanhLayer.maps
+      ~TanhLayer.mapper
+      ~TanhLayer.discardedMappers
+      ~TanhLayer.node
+   
+   

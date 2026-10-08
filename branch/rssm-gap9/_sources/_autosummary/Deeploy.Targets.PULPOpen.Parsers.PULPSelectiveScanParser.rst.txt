@@ -1,0 +1,39 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.Parsers.PULPSelectiveScanParser
+========================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.Parsers
+
+.. autoclass:: PULPSelectiveScanParser
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~PULPSelectiveScanParser.__init__
+      ~PULPSelectiveScanParser.parse
+      ~PULPSelectiveScanParser.parseInputs
+      ~PULPSelectiveScanParser.parseNode
+      ~PULPSelectiveScanParser.parseNodeCtxt
+      ~PULPSelectiveScanParser.parseOutputs
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~PULPSelectiveScanParser.operatorRepresentation
+   
+   

@@ -1,0 +1,42 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.TileConstraints.MatMulTileConstraint.MatMulTileConstraintMinM
+======================================================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.TileConstraints.MatMulTileConstraint
+
+.. autoclass:: MatMulTileConstraintMinM
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~MatMulTileConstraintMinM.__init__
+      ~MatMulTileConstraintMinM.addGeometricalConstraint
+      ~MatMulTileConstraintMinM.addPolicyConstraint
+      ~MatMulTileConstraintMinM.constructSymbolicNodeRep
+      ~MatMulTileConstraintMinM.extractBaseAddr
+      ~MatMulTileConstraintMinM.getBaseAddr
+      ~MatMulTileConstraintMinM.sanitizeTilingSchedule
+      ~MatMulTileConstraintMinM.serializeTilingSolution
+      ~MatMulTileConstraintMinM.wrapTilingSolution
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~MatMulTileConstraintMinM.MIN_M_TILE
+   
+   

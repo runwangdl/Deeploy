@@ -1,0 +1,33 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.MemoryLevelExtension.OptimizationPasses.MemoryLevelAnnotationPasses.AnnotateActivationMemoryLevel
+=========================================================================================================
+
+.. currentmodule:: Deeploy.MemoryLevelExtension.OptimizationPasses.MemoryLevelAnnotationPasses
+
+.. autoclass:: AnnotateActivationMemoryLevel
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~AnnotateActivationMemoryLevel.__init__
+      ~AnnotateActivationMemoryLevel.apply
+      ~AnnotateActivationMemoryLevel.named_subpasses
+      ~AnnotateActivationMemoryLevel.register_subpass
+      ~AnnotateActivationMemoryLevel.remove_subpass
+      ~AnnotateActivationMemoryLevel.setup_passes
+   
+   
+
+   
+   
+   

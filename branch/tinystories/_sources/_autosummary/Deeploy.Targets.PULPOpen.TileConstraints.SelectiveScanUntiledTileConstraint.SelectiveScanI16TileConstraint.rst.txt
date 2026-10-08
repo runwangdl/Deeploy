@@ -1,0 +1,36 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.TileConstraints.SelectiveScanUntiledTileConstraint.SelectiveScanI16TileConstraint
+==========================================================================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.TileConstraints.SelectiveScanUntiledTileConstraint
+
+.. autoclass:: SelectiveScanI16TileConstraint
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~SelectiveScanI16TileConstraint.__init__
+      ~SelectiveScanI16TileConstraint.addGeometricalConstraint
+      ~SelectiveScanI16TileConstraint.addPolicyConstraint
+      ~SelectiveScanI16TileConstraint.constructSymbolicNodeRep
+      ~SelectiveScanI16TileConstraint.extractBaseAddr
+      ~SelectiveScanI16TileConstraint.getBaseAddr
+      ~SelectiveScanI16TileConstraint.sanitizeTilingSchedule
+      ~SelectiveScanI16TileConstraint.serializeTilingSolution
+      ~SelectiveScanI16TileConstraint.wrapTilingSolution
+   
+   
+
+   
+   
+   

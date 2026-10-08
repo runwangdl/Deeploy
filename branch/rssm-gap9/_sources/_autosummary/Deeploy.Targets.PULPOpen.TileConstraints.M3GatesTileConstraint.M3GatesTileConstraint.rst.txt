@@ -1,0 +1,36 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.TileConstraints.M3GatesTileConstraint.M3GatesTileConstraint
+====================================================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.TileConstraints.M3GatesTileConstraint
+
+.. autoclass:: M3GatesTileConstraint
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~M3GatesTileConstraint.__init__
+      ~M3GatesTileConstraint.addGeometricalConstraint
+      ~M3GatesTileConstraint.addPolicyConstraint
+      ~M3GatesTileConstraint.constructSymbolicNodeRep
+      ~M3GatesTileConstraint.extractBaseAddr
+      ~M3GatesTileConstraint.getBaseAddr
+      ~M3GatesTileConstraint.sanitizeTilingSchedule
+      ~M3GatesTileConstraint.serializeTilingSolution
+      ~M3GatesTileConstraint.wrapTilingSolution
+   
+   
+
+   
+   
+   

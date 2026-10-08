@@ -1,0 +1,39 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.Generic.Parsers.TanhParser
+==========================================
+
+.. currentmodule:: Deeploy.Targets.Generic.Parsers
+
+.. autoclass:: TanhParser
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~TanhParser.__init__
+      ~TanhParser.parse
+      ~TanhParser.parseInputs
+      ~TanhParser.parseNode
+      ~TanhParser.parseNodeCtxt
+      ~TanhParser.parseOutputs
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~TanhParser.operatorRepresentation
+   
+   

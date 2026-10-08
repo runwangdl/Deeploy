@@ -1,0 +1,47 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.Layers.PULPM3GatesLayer
+================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.Layers
+
+.. autoclass:: PULPM3GatesLayer
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~PULPM3GatesLayer.__init__
+      ~PULPM3GatesLayer.bind
+      ~PULPM3GatesLayer.broadcast
+      ~PULPM3GatesLayer.codeTransform
+      ~PULPM3GatesLayer.computeOps
+      ~PULPM3GatesLayer.computeShapes
+      ~PULPM3GatesLayer.discardCurrentMapper
+      ~PULPM3GatesLayer.generate
+      ~PULPM3GatesLayer.parse
+      ~PULPM3GatesLayer.resetDiscardedMappers
+      ~PULPM3GatesLayer.typeCheck
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~PULPM3GatesLayer.maps
+      ~PULPM3GatesLayer.mapper
+      ~PULPM3GatesLayer.discardedMappers
+      ~PULPM3GatesLayer.node
+   
+   

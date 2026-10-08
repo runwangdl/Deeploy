@@ -1,0 +1,36 @@
+.. SPDX-FileCopyrightText: 2024 ETH Zurich and University of Bologna
+..
+.. SPDX-License-Identifier: Apache-2.0
+
+Deeploy.Targets.PULPOpen.TileConstraints.RMSNormI32TileConstraint.RMSNormI32TileConstraint
+==========================================================================================
+
+.. currentmodule:: Deeploy.Targets.PULPOpen.TileConstraints.RMSNormI32TileConstraint
+
+.. autoclass:: RMSNormI32TileConstraint
+   :members:
+   :show-inheritance:
+   :inherited-members:
+
+   
+   
+   .. rubric:: Methods
+   .. automethod:: __init__
+
+   .. autosummary::
+   
+      ~RMSNormI32TileConstraint.__init__
+      ~RMSNormI32TileConstraint.addGeometricalConstraint
+      ~RMSNormI32TileConstraint.addPolicyConstraint
+      ~RMSNormI32TileConstraint.constructSymbolicNodeRep
+      ~RMSNormI32TileConstraint.extractBaseAddr
+      ~RMSNormI32TileConstraint.getBaseAddr
+      ~RMSNormI32TileConstraint.sanitizeTilingSchedule
+      ~RMSNormI32TileConstraint.serializeTilingSolution
+      ~RMSNormI32TileConstraint.wrapTilingSolution
+   
+   
+
+   
+   
+   
