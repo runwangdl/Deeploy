@@ -72,7 +72,7 @@ for i in range(len(data_in_shape) - 2, -1, -1):
 elemBytes = data_out_type.referencedType.typeWidth // 8
 
 # Tiled flow: data_in_size becomes a str pointer-ref; L1 tile is contiguous so a single bulk memcpy is correct (#134).
-tiledFastPath = isinstance(data_in_size, str) and all(int(s) == 1 for s in steps)
+tiledFastPath = (isinstance(data_in_size, str) or int(context.get('tiled_slice', 0)) == 1) and all(int(s) == 1 for s in steps)
 
 lastAx = int(axes[-1])
 # Un-tiled fast path: collapse innermost step==1 axis into one memcpy.

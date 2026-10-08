@@ -8,7 +8,7 @@ import numpy as np
 from ortools.constraint_solver.pywrapcp import IntVar
 
 from Deeploy.AbstractDataTypes import PointerClass
-from Deeploy.CommonExtensions.DataTypes import uint16_t
+from Deeploy.CommonExtensions.DataTypes import uint8_t, uint16_t
 from Deeploy.DeeployTypes import NetworkContext, OperatorRepresentation
 from Deeploy.TilingExtension.MemoryConstraints import NodeMemoryConstraint
 from Deeploy.TilingExtension.TileConstraint import TileConstraint
@@ -179,6 +179,15 @@ class SliceTileConstraint(TileConstraint):
             # Append new cubes
             inputLoadSchedule.append({"data_in": in_cube})
             outputLoadSchedule.append({"data_out": out_cube})
+
+        # The L1 tile holds exactly in_cube (computeInputCubeFromOutputCube), so the kernel must not add the graph-level
+        # `starts` offset on top of it. The template detects the tiled flow by data_in_size being a per-tile reference,
+        # but with a single tile minimizeVariableReplacement folds it into a constant and the template fell back to the
+        # un-tiled loops: tile + starts*stride, out of L1 for a 256x768 last-row slice. Pass an explicit flag through the
+        # same mechanism (constant 1 after minimisation); this function only sees a copy of operatorRepresentation.
+        if all(int(s) > 0 for s in operatorRepresentation['steps']):
+            replacements["tiled_slice"] = [1] * len(outputCubes)
+            replacementTypes["tiled_slice"] = PointerClass(uint8_t)
 
         # Prepare containing objects with information computed in this function regarding tiling schedule
         # and variable replacement inside operator representation
