@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 from typing import Optional
 
 from Deeploy.CommonExtensions.OptimizationPasses.TopologyOptimizationPasses.LoweringOptimizationPasses import \
@@ -13,10 +14,13 @@ from Deeploy.Targets.GAP9.Platform import GAP9ClusterEngine, GAP9ConstantBuffer,
 from Deeploy.Targets.NE16.Engine import NE16Engine
 from Deeploy.Targets.PULPOpen.Platform import PULPOptimizer
 
+# DEEPLOY_NE16_NO_PW=1: do not lower GEMM / MatMul to pointwise convolutions, i.e. keep every projection on the
+# cluster cores (cores-only baseline of the same network; the scan ops choose their placement by their own attrs).
+_NE16_LOWER_PW = os.environ.get("DEEPLOY_NE16_NO_PW", "0") != "1"
+
 NE16Optimizer = TopologyOptimizer([
     *PULPOptimizer.passes,
-    RequantizedGemmToPwPass(),
-    MatMulToPwPass(),
+    *([RequantizedGemmToPwPass(), MatMulToPwPass()] if _NE16_LOWER_PW else []),
 ], name = "NE16Optimizer")
 
 
