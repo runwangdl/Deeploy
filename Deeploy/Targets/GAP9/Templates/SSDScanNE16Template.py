@@ -29,7 +29,7 @@ def pixelGrid(P: int) -> Tuple[int, int]:
     return best[1], best[2]
 
 
-def scratchBytes(Q, N, P, NHt, GH, GW, decay_mode = 0, mamba3 = 0, R = 1, bc_norm = 0):
+def scratchBytes(Q, N, P, NHt, GH, GW, decay_mode = 0, mamba3 = 0, R = 1, bc_norm = 0, fused = 0):
     """Mirrors the carve-up in GAP9_SSDScanNE16_i8_i8 (NHt may be a solver variable); R = Mamba-3 MIMO rank."""
     PXA = GH * GW
     QR = Q * R
@@ -44,6 +44,9 @@ def scratchBytes(Q, N, P, NHt, GH, GW, decay_mode = 0, mamba3 = 0, R = 1, bc_nor
     rot += NHt * 2 * Q * N * R * 4 if bc_norm else 0
     gsz = 4 * QR * QR * (NHt if bc_norm else 1)
     slots = 1 if bc_norm else NE16_SLOTS
+    # fused (one job per head and chunk): weights (Q+N)^2 per head and a Q x (Q+N) per-core scratch, one accumulator of
+    # PXA x (Q+N) per slot; the kernel's carve-up needs at most 1 KB more than the two-job layout for FEMBA's shape
+    rot += 1024 if fused else 0
     return NHt * (PXA * (QR + N) + 2 * WSZ + 4 * MSZ) + 4 * slots * ASZ + gsz + 4 * NUM_CORES * (QM + Q) + 512 + rot
 
 
@@ -65,10 +68,12 @@ class GAP9SSDScanNE16Template(NodeTemplate):
         name = operatorRepresentation['nodeName']
         # state [B][NHt][P][N] int32 followed by the per-core |state| maxima [B][NHt][NUM_CORES]
         m3 = int(operatorRepresentation.get('mamba3', 0))
-        return [(name + "_h_state", batchSize * NHt * (P * N + NUM_CORES + (1 if m3 else 0)) * 4), (name + "_gate_lut_l1", 256 * 4),
+        fused = int(operatorRepresentation.get('fused', 0))   # one scale slot per head for the stored state
+        return [(name + "_h_state", batchSize * NHt * (P * N + NUM_CORES + (1 if (m3 or fused) else 0)) * 4), (name + "_gate_lut_l1", 256 * 4),
                 (name + "_ne16_scratch",
                  scratchBytes(Q, N, P, NHt, GH, GW, int(operatorRepresentation.get('decay_mode', 0)), m3,
-                              int(operatorRepresentation.get('mimo_rank', 1)), int(operatorRepresentation.get('bc_norm', 0))))]
+                              int(operatorRepresentation.get('mimo_rank', 1)), int(operatorRepresentation.get('bc_norm', 0)),
+                              int(operatorRepresentation.get('fused', 0))))]
 
     def hoistTransientBuffers(self, ctxt: NetworkContext,
                               operatorRepresentation: OperatorRepresentation) -> Tuple[NetworkContext, Dict, List[str]]:
@@ -135,6 +140,7 @@ GAP9_SSDScanNE16_i8_i8(
     (const int32_t *) ${bc_Bb},
     (const int32_t *) ${bc_Cb},
     ${bc_norm},
-    ${core_mm}
+    ${core_mm},
+    ${fused}
 );
 """)
