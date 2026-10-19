@@ -725,6 +725,7 @@ class PULPSSDScanNE16Parser(PULPSSDScanParser):
             self.operatorRepresentation['bc_norm'] = int(node.attrs.get('bc_norm', 0))
             self.operatorRepresentation['core_mm'] = int(node.attrs.get('core_mm', 0))   # A1: products on the cores
             self.operatorRepresentation['fused'] = int(node.attrs.get('fused', 0))       # one job per (head, chunk), state update inside
+            self.operatorRepresentation['twopass'] = int(node.attrs.get('twopass', 0))   # fused, large Q: two-pass quantisation, no Q x (Q+N) scratch
             for k in ('dta', 'R', 'm3_gamma', 'm3_w', 'm3_theta', 'bc_Bw', 'bc_Cw', 'bc_Bb', 'bc_Cb'):
                 self.operatorRepresentation[k] = 'NULL'
         return ret

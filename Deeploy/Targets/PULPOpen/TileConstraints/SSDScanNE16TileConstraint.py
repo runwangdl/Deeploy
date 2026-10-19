@@ -88,13 +88,20 @@ class SSDScanNE16TileConstraint(SSDScanTileConstraint):
         headTile = min(nHeads, SSDScanNE16TileConstraint.HEAD_TILE_MAX)
         if int(parseDict.get('bc_norm', 0)) == 1:
             headTile = 1   # trained Mamba-3 (rank 2, int32 out): one head per tile fits L1 (scratch sized for one slot)
-        tilerModel.addConstraint(aHeadVar <= headTile)
-        tilerModel.addConstraint(aHeadVar >= headTile, strategy = PerformanceHint(priority = 2))
+        import os
+        if os.environ.get('DEEPLOY_SSD_HEAD_TILE'):   # sweeps: pin the head tile (hard)
+            headTile = int(os.environ['DEEPLOY_SSD_HEAD_TILE'])
+            tilerModel.addConstraint(aHeadVar == headTile)
+        else:
+            tilerModel.addConstraint(aHeadVar <= headTile)
+            tilerModel.addConstraint(aHeadVar >= headTile, strategy = PerformanceHint(priority = 2))
 
         # one chunk per tile (the NE16 jobs are per chunk anyway; smaller x/z/y tiles leave L1 to the state)
         xLVar = tilerModel.getTensorDimVar(tensorName = xBuffer.name, dimIdx = 1)
         chunk = parseDict['chunk_size']
-        if xBuffer.shape[1] > chunk:
+        if os.environ.get('DEEPLOY_SSD_LTILE'):   # sweeps: pin the L tile (hard)
+            tilerModel.addConstraint(xLVar == min(int(os.environ['DEEPLOY_SSD_LTILE']), xBuffer.shape[1]))
+        elif xBuffer.shape[1] > chunk and os.environ.get('DEEPLOY_SSD_LTILE_FULL', '0') != '1':   # sweeps: whole-L tiles
             tilerModel.addConstraint(xLVar <= chunk, strategy = PerformanceHint(priority = 1))
 
         return tilerModel
