@@ -66,7 +66,8 @@ static ne16_task_t ssdn_tasks[SSDN_SLOTS][3];
 #if SSDN_PROFILE
 static uint32_t ssdn_p_epi, ssdn_p_upd;  // core 1 only
 static uint32_t ssdn_p_epi_last, ssdn_n_epi_mid;
-static uint32_t ssdn_ev[6];  // core 1, epilogue only: instr, ld_stall, imiss, ld_ext, ld_ext_cyc, st_ext  // core 1: epilogue time of the last head (8 cores, no job alongside), count of the others
+static uint32_t ssdn_ev[6];
+PI_L1 static uint32_t ssdn_item_t[NUM_CORES][4], ssdn_item_n[NUM_CORES][4];   // fused phase A: cycles and count per item part (0 y rows, 1 state rows, 2 x~, 3 S8)  // core 1, epilogue only: instr, ld_stall, imiss, ld_ext, ld_ext_cyc, st_ext  // core 1: epilogue time of the last head (8 cores, no job alongside), count of the others
 #endif
 
 static inline int32_t ssdn_expq(const int16_t *lut, int32_t z_q15) {
@@ -1670,7 +1671,8 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   const int number_of_chunks = (int)(L / Q);
 #if SSDN_PROFILE
   uint32_t prof_N = 0, prof_G = 0, prof_A = 0, prof_B = 0, pb_disp = 0, pb_res = 0, pb_epi = 0, pb_upd = 0, pb_bar = 0;
-  uint32_t prof_mm = 0;   // core_mm: the two products on the cores (core 0's time, all cores busy)
+  uint32_t prof_mm = 0;
+  uint32_t prof_job0 = 0;   // first job of phase B: dispatch + barrier + resolve, nothing alongside   // core_mm: the two products on the cores (core 0's time, all cores busy)
   if (core == 0 || core == 1) { pi_perf_conf((1 << PI_PERF_CYCLES) | (1 << PI_PERF_INSTR) | (1 << PI_PERF_LD_STALL) | (1 << PI_PERF_IMISS) | (1 << PI_PERF_LD_EXT) | (1 << PI_PERF_LD_EXT_CYC) | (1 << PI_PERF_ST_EXT)); pi_perf_reset(); pi_perf_start(); }
   SSDN_T(prof_t0);
 #endif
@@ -1774,7 +1776,13 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
         for (uint32_t k = (uint32_t)core; k < 4 * NHt; k += NUM_CORES) {
           static const uint8_t ssdn_part_order[4] = {3, 1, 2, 0};
           // fused: item weights y rows > state rows > the two input halves; in index order a core pairs 0 with 2 and 1 with 3
+#if SSDN_PROFILE
+          const uint32_t pit0 = pi_perf_read(PI_PERF_CYCLES);
+#endif
           ssdn_phaseA_item(cxp, (k % NHt) * 4 + (fused ? (k / NHt) : ssdn_part_order[k / NHt]), cscr);
+#if SSDN_PROFILE
+          if (fused) { ssdn_item_t[core][k / NHt] += pi_perf_read(PI_PERF_CYCLES) - pit0; ssdn_item_n[core][k / NHt]++; }
+#endif
         }
       }
       pi_cl_team_barrier();
@@ -1838,6 +1846,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
         pi_cl_team_barrier();
 #if SSDN_PROFILE
         if (core == 0) pb_res += pb_t5 - pb_t4;
+        if (core == 0 && hh == 0) prof_job0 += pb_t5 - pb_t0;
         if (core == 1) pb_bar += (pb_t4 - pb_t3) + (pi_perf_read(PI_PERF_CYCLES) - pb_t5);
 #endif
       }
@@ -1857,7 +1866,8 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
     a[5] += pb_disp; a[6] += pb_res; a[7] += prof_mm; a[8] = ssdn_p1[0]; a[9] = ssdn_p1[1]; a[10] += ssdn_p1[2]; a[11] += NHt;   // epi/state are cumulative statics
   }
 #else
-  if (core == 0) printf("SSDN_PROF N=%u NHt=%u L=%u G=%u A=%u B=%u total=%u core0: dispatch=%u resolve_wait=%u mm=%u\n", prof_N, NHt, L, prof_G, prof_A, prof_B, pi_perf_read(PI_PERF_CYCLES) - prof_t0, pb_disp, pb_res, prof_mm);
+  if (core == 0) printf("SSDN_PROF N=%u NHt=%u L=%u G=%u A=%u B=%u total=%u core0: dispatch=%u resolve_wait=%u mm=%u job0=%u\n", prof_N, NHt, L, prof_G, prof_A, prof_B, pi_perf_read(PI_PERF_CYCLES) - prof_t0, pb_disp, pb_res, prof_mm, prof_job0);
+  if (core == 0) { uint32_t it[4] = {0, 0, 0, 0}, in[4] = {0, 0, 0, 0}; for (int c = 0; c < NUM_CORES; c++) for (int q = 0; q < 4; q++) { it[q] += ssdn_item_t[c][q]; in[q] += ssdn_item_n[c][q]; } printf("SSDN_ITEMS y=%u/%u st=%u/%u x=%u/%u s8=%u/%u\n", it[0], in[0], it[1], in[1], it[2], in[2], it[3], in[3]); }
   if (core == 0) printf("SSDN_PROF core1: epilogue=%u state_update=%u barrier_wait=%u epi_last=%u n_mid=%u ev instr=%u ldstall=%u imiss=%u ldext=%u ldextcyc=%u stext=%u\n", ssdn_p1[0], ssdn_p1[1], ssdn_p1[2], ssdn_p_epi_last, ssdn_n_epi_mid, ssdn_ev[0], ssdn_ev[1], ssdn_ev[2], ssdn_ev[3], ssdn_ev[4], ssdn_ev[5]);
 #endif
   pi_cl_team_barrier();
