@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os as _os
 from typing import Dict, List, Tuple
 
 from Deeploy.AbstractDataTypes import PointerClass
@@ -114,6 +115,13 @@ class NE16PWConv2DTileConstraint(TileConstraint):
                                      strategy = PerformanceHint(priority = 5))
             tilerModel.addConstraint(outputWidthVar == outputWidthVar.Max(),
                                      strategy = PerformanceHint(priority = 4))
+
+        # R32 decision table (tiling options only, numerics unchanged): optional hard caps on the pixel tile and the
+        # output-channel tile of every NE16 1x1 node, to measure tilings between the default and the flat-column rule
+        if _os.environ.get("DEEPLOY_PW_MAX_PIX"):
+            tilerModel.addConstraint(outputHeightVar <= int(_os.environ["DEEPLOY_PW_MAX_PIX"]))
+        if _os.environ.get("DEEPLOY_PW_MAX_KO"):
+            tilerModel.addConstraint(outputChannelVar <= int(_os.environ["DEEPLOY_PW_MAX_KO"]))
 
         # LMACAN: Force full input channel to avoid partial results
         tilerModel.addConstraint(inputChannelVar == inputChannelVar.Max())

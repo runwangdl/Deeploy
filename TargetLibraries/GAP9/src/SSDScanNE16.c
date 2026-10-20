@@ -67,7 +67,7 @@ static ne16_task_t ssdn_tasks[SSDN_SLOTS][3];
 static uint32_t ssdn_p_epi, ssdn_p_upd;  // core 1 only
 static uint32_t ssdn_p_epi_last, ssdn_n_epi_mid;
 static uint32_t ssdn_ev[6];
-PI_L1 static uint32_t ssdn_item_t[NUM_CORES][4], ssdn_item_n[NUM_CORES][4];   // fused phase A: cycles and count per item part (0 y rows, 1 state rows, 2 x~, 3 S8)  // core 1, epilogue only: instr, ld_stall, imiss, ld_ext, ld_ext_cyc, st_ext  // core 1: epilogue time of the last head (8 cores, no job alongside), count of the others
+PI_L2 static uint32_t ssdn_item_t[NUM_CORES][4], ssdn_item_n[NUM_CORES][4];   // fused phase A: cycles and count per item part (0 y rows, 1 state rows, 2 x~, 3 S8)  // core 1, epilogue only: instr, ld_stall, imiss, ld_ext, ld_ext_cyc, st_ext  // core 1: epilogue time of the last head (8 cores, no job alongside), count of the others
 #endif
 
 static inline int32_t ssdn_expq(const int16_t *lut, int32_t z_q15) {

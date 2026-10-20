@@ -126,6 +126,9 @@ void RunNetworkWrapper(void *args) {
   StopTimer();
 }
 
+extern uint32_t ssm16_prof_acc[6] __attribute__((weak));
+extern uint32_t ssdn_prof_acc[12] __attribute__((weak));
+
 int main(void) {
 
 #ifdef POWER_MEASUREMENT
@@ -257,6 +260,12 @@ int main(void) {
   }
 
   printf("Runtime: %u cycles\r\n", total_cycles);
+  // profile builds only (weak: absent otherwise): the silent kernel profiles, printed from the FC (cluster printf drops on the board UART)
+  if (ssm16_prof_acc) printf("SSM16_PROFACC calls=%u kernel=%u prep=%u lane=%u tail=%u state=%u\r\n", ssm16_prof_acc[0], ssm16_prof_acc[1],
+                             ssm16_prof_acc[2], ssm16_prof_acc[3], ssm16_prof_acc[4], ssm16_prof_acc[5]);
+  if (ssdn_prof_acc) printf("SSDN_PROFACC calls=%u G=%u A=%u B=%u total=%u dispatch=%u resolve=%u mm=%u epilogue=%u state=%u barrier=%u NHt_sum=%u\r\n",
+                            ssdn_prof_acc[0], ssdn_prof_acc[1], ssdn_prof_acc[2], ssdn_prof_acc[3], ssdn_prof_acc[4], ssdn_prof_acc[5],
+                            ssdn_prof_acc[6], ssdn_prof_acc[7], ssdn_prof_acc[8], ssdn_prof_acc[9], ssdn_prof_acc[10], ssdn_prof_acc[11]);
   { // per-row checksums of named tensors (filled only by a patched Network.c, see patch_ck_named.py)
     extern int32_t sdbg_ck_r[8][80] __attribute__((weak)); extern int32_t sdbg_ck_n __attribute__((weak));
     if (&sdbg_ck_n) for (int k = 0; k < sdbg_ck_n; k++) {

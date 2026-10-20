@@ -82,6 +82,16 @@ class SelectiveScanTileConstraint(TileConstraint):
         LVar = tilerModel.getTensorDimVar(tensorName = xBuffer.name, dimIdx = 1)
         DInnerVar = tilerModel.getTensorDimVar(tensorName = xBuffer.name, dimIdx = 2)
 
+        # R32 decision table (tiling options only, numerics unchanged): DEEPLOY_SSM_STOCK=1 drops the two hints below
+        # (stock solver), DEEPLOY_SSM_LTILE / DEEPLOY_SSM_DTILE pin the L / d_inner tile (hard)
+        import os as _os
+        if _os.environ.get('DEEPLOY_SSM_LTILE'):
+            tilerModel.addConstraint(LVar == min(int(_os.environ['DEEPLOY_SSM_LTILE']), LFull))
+        if _os.environ.get('DEEPLOY_SSM_DTILE'):
+            tilerModel.addConstraint(DInnerVar == min(int(_os.environ['DEEPLOY_SSM_DTILE']), DInnerFull))
+        if _os.environ.get('DEEPLOY_SSM_STOCK', '0') == '1':
+            return tilerModel
+
         # d_inner: no cap; L1 already forces tiling, so let it pick the largest DT that fits.
         tilerModel.addConstraint(DInnerVar <= DInnerFull, strategy = PerformanceHint(priority = 1))
 
