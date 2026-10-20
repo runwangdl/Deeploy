@@ -39,12 +39,25 @@
 #define SSDN_META_HDR 8
 // SSDN_PROFILE=1 prints per-call phase timings; printf on the 1 KB cluster stacks can corrupt them and crash
 // gvsoc after the first call (use Deeploy's --profileTiling per-tile numbers for whole-network measurements)
+// SSDN_EPI_FAST=1: fused v3 epilogue with branch-free symmetric rounding, two outputs per iteration (bit-exact)
+#ifndef SSDN_BANK_STAGGER
+#define SSDN_BANK_STAGGER 0
+#endif
+#ifndef SSDN_CORE0_EPI
+#define SSDN_CORE0_EPI 0
+#endif
+#ifndef SSDN_EPI_FAST
+#define SSDN_EPI_FAST 0
+#endif
 #ifndef SSDN_PROFILE
 #define SSDN_PROFILE 0
 #endif
 #if SSDN_PROFILE
 static PI_L1 uint32_t ssdn_p1[3];
 #define SSDN_T(var) uint32_t var = pi_perf_read(PI_PERF_CYCLES)
+// SSDN_PROFILE == 2: silent -- sums over all calls in L2 (calls, G, A, B, total, dispatch, resolve, mm, epilogue, state, barrier, NHt);
+// a host-side printf after the network reads ssdn_prof_acc (patch_ssdnprof.py), no printf from the cluster
+PI_L2 uint32_t ssdn_prof_acc[12];
 #else
 #define SSDN_T(var)
 #endif
@@ -52,6 +65,8 @@ static PI_L1 uint32_t ssdn_p1[3];
 static ne16_task_t ssdn_tasks[SSDN_SLOTS][3];
 #if SSDN_PROFILE
 static uint32_t ssdn_p_epi, ssdn_p_upd;  // core 1 only
+static uint32_t ssdn_p_epi_last, ssdn_n_epi_mid;
+static uint32_t ssdn_ev[6];  // core 1, epilogue only: instr, ld_stall, imiss, ld_ext, ld_ext_cyc, st_ext  // core 1: epilogue time of the last head (8 cores, no job alongside), count of the others
 #endif
 
 static inline int32_t ssdn_expq(const int16_t *lut, int32_t z_q15) {
@@ -1243,6 +1258,12 @@ static __attribute__((noinline)) void ssdn_epi_v1(const ssdn_ctx_t *cx, uint32_t
 }
 
 // fused epilogue: y_acc = (accY - compY) * 2^shY + D x, then the v1 (int8) or wide (int32) output
+// symmetric (round-half-away-from-zero) arithmetic shift without a branch: for s > 0,
+// v >= 0 ? (v + h) >> s : -((-v + h) >> s)  ==  (v + h + (v >> 31)) >> s,  h = 2^(s-1); mk = -1 if s > 0 else 0
+static inline int32_t ssdn_rs_sym(int32_t v, int32_t s, int32_t h, int32_t mk) {
+  return (v + h + ((v >> 31) & mk)) >> s;
+}
+
 static __attribute__((noinline)) void ssdn_epi_fused(const ssdn_ctx_t *cx, uint32_t hp, uint32_t e0, uint32_t e1) {
   const int8_t *x = cx->x, *z = cx->z; int8_t *y = (int8_t *)cx->y; int32_t *y32 = (int32_t *)cx->y;
   const int32_t *gate_lut = cx->gate_lut;
@@ -1262,9 +1283,7 @@ static __attribute__((noinline)) void ssdn_epi_fused(const ssdn_ctx_t *cx, uint3
     const int64_t bK = (int64_t)KIF * 32385;
     const int64_t b1 = shY >= 0 ? bK << shY : bK >> (-shY);
     const int64_t bound = b1 + (D_h < 0 ? -D_h : D_h) * 128;
-    int bl = 0;
-    while (bl < 64 && (bound >> bl) != 0)
-      bl++;
+    const int bl = bound > 0 ? 64 - __builtin_clzll((uint64_t)bound) : 0;   // bit length (bound >= 0)
     const int ysh = bl > 15 ? bl - 15 : 0;
     const int s1 = ysh - shY;   // >= 6 by construction
     const int32_t h1 = s1 > 0 ? (1 << (s1 - 1)) : 0, hd = ysh > 0 ? (1 << (ysh - 1)) : 0;
@@ -1279,6 +1298,27 @@ static __attribute__((noinline)) void ssdn_epi_fused(const ssdn_ctx_t *cx, uint3
       int32_t *yr = y32 + row;
       const int32_t c1 = compY[t];
       const int32_t *p1 = a1 + t + cb * KOF;
+#if SSDN_EPI_FAST
+      if (sl == 0 && ysh > 0 && sr > 0) {   // p.addRNr: (m + v + 2^(s-1)) >> s with m = v >> 31 is the symmetric rounding, bit-identical
+        const int32_t *gl = gate_lut + 128;
+        for (uint32_t c = cb; c < ce; c++, p1 += KOF) {
+          const int32_t v1 = *p1 - c1, dx = D32 * (int32_t)xr[c];
+          const int32_t t1 = __builtin_pulp_addRN_r(v1 >> 31, v1, s1) + __builtin_pulp_addRN_r(dx >> 31, dx, ysh);
+          const int32_t pr = t1 * gl[(int32_t)zr[c]];
+          yr[c] = __builtin_pulp_addRN_r(pr >> 31, pr, sr);
+        }
+        continue;
+      }
+      if (sr == 0 && ysh > 0) {   // left-shifted output (the trained network's case): y = (t1 * gate) << sl, no branch
+        const int32_t *gl = gate_lut + 128;
+        for (uint32_t c = cb; c < ce; c++, p1 += KOF) {
+          const int32_t v1 = *p1 - c1, dx = D32 * (int32_t)xr[c];
+          const int32_t t1 = __builtin_pulp_addRN_r(v1 >> 31, v1, s1) + __builtin_pulp_addRN_r(dx >> 31, dx, ysh);
+          yr[c] = (t1 * gl[(int32_t)zr[c]]) << sl;
+        }
+        continue;
+      }
+#endif
       for (uint32_t c = cb; c < ce; c++, p1 += KOF) {
         const int32_t v1 = *p1 - c1;
         const int32_t dx = D32 * (int32_t)xr[c];
@@ -1322,6 +1362,28 @@ static __attribute__((noinline)) void ssdn_state_fused(const ssdn_ctx_t *cx, uin
   const int32_t *aS = cx->acc + (hp & 1) * cx->ASZ + Q;
   int32_t *hs = cx->h_state + (b * NHt + hp) * P * N;
   uint32_t mxs = 0;
+#if SSDN_EPI_FAST
+  if (N == 16) {   // whole channels as one unrolled body (same elements, max is order-free: bit-identical)
+    uint32_t e = s0;
+    for (; e < s1 && (e & 15); e++) {   // leading partial channel
+      const int32_t hv = aS[(e >> 4) * KOF + (e & 15)] - compS[e & 15];
+      hs[e] = hv; mxs = ssdn_absmax(mxs, hv);
+    }
+    const int32_t *ar = aS + (e >> 4) * KOF; int32_t *hr = hs + e;
+    for (; e + 16 <= s1; e += 16, ar += KOF, hr += 16) {
+#pragma GCC unroll 16
+      for (uint32_t n = 0; n < 16; n++) {
+        const int32_t hv = ar[n] - compS[n];
+        hr[n] = hv; mxs = ssdn_absmax(mxs, hv);
+      }
+    }
+    for (; e < s1; e++) {   // trailing partial channel
+      const int32_t hv = aS[(e >> 4) * KOF + (e & 15)] - compS[e & 15];
+      hs[e] = hv; mxs = ssdn_absmax(mxs, hv);
+    }
+    s1 = s0;   // skip the generic loop
+  }
+#endif
   for (uint32_t c = s0 / N; c < P && c * N < s1; c++) {
     int32_t *hr = hs + c * N;
     const int32_t *ar = aS + c * KOF;
@@ -1379,9 +1441,11 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
   const uint32_t b = cx->b, NHt = cx->NHt, P = cx->P, N = cx->N, Q = cx->Q;
   const uint32_t epilogue_version = cx->epilogue_version;
   const uint32_t hp = hh - 1;
-  const uint32_t QP = Q * P, ech = (QP + nw - 1) / nw;
+  // SSDN_BANK_STAGGER: per-core slice lengths that are a multiple of the 16 TCDM banks put every core on the same bank at
+  // the same step (y and state stores); one extra element staggers them (pure work split, bit-identical results)
+  const uint32_t QP = Q * P, ech0 = (QP + nw - 1) / nw, ech = SSDN_BANK_STAGGER && (ech0 & 15) == 0 ? ech0 + 1 : ech0;
   const uint32_t e0 = wi * ech < QP ? wi * ech : QP, e1 = e0 + ech < QP ? e0 + ech : QP;
-  const uint32_t PN = P * N, sch = (PN + nw - 1) / nw;
+  const uint32_t PN = P * N, sch0 = (PN + nw - 1) / nw, sch = SSDN_BANK_STAGGER && (sch0 & 15) == 0 ? sch0 + 1 : sch0;
 #if SSDN_PROFILE
   const uint32_t pf0 = pi_perf_read(PI_PERF_CYCLES);
 #endif
@@ -1390,10 +1454,16 @@ static __attribute__((noinline)) void ssdn_finish_head(const ssdn_ctx_t *cx, uin
 #if SSDN_PROFILE
     const uint32_t pf0f = pi_perf_read(PI_PERF_CYCLES);
 #endif
+#if SSDN_PROFILE
+    uint32_t ev0[6] = {0, 0, 0, 0, 0, 0}; if (pi_core_id() == 1) { ev0[0] = pi_perf_read(PI_PERF_INSTR); ev0[1] = pi_perf_read(PI_PERF_LD_STALL); ev0[2] = pi_perf_read(PI_PERF_IMISS); ev0[3] = pi_perf_read(PI_PERF_LD_EXT); ev0[4] = pi_perf_read(PI_PERF_LD_EXT_CYC); ev0[5] = pi_perf_read(PI_PERF_ST_EXT); }
+#endif
     ssdn_epi_fused(cx, hp, e0, e1);
 #if SSDN_PROFILE
+    if (pi_core_id() == 1) { ssdn_ev[0] += pi_perf_read(PI_PERF_INSTR) - ev0[0]; ssdn_ev[1] += pi_perf_read(PI_PERF_LD_STALL) - ev0[1]; ssdn_ev[2] += pi_perf_read(PI_PERF_IMISS) - ev0[2]; ssdn_ev[3] += pi_perf_read(PI_PERF_LD_EXT) - ev0[3]; ssdn_ev[4] += pi_perf_read(PI_PERF_LD_EXT_CYC) - ev0[4]; ssdn_ev[5] += pi_perf_read(PI_PERF_ST_EXT) - ev0[5]; }
+#endif
+#if SSDN_PROFILE
     const uint32_t pf1f = pi_perf_read(PI_PERF_CYCLES);
-    if (pi_core_id() == 1) ssdn_p_epi += pf1f - pf0f;
+    if (pi_core_id() == 1) { ssdn_p_epi += pf1f - pf0f; if (nw == NUM_CORES) ssdn_p_epi_last += pf1f - pf0f; else ssdn_n_epi_mid++; }
 #endif
     ssdn_state_fused(cx, hp, wi, nw, s0, s1);
 #if SSDN_PROFILE
@@ -1600,7 +1670,8 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   const int number_of_chunks = (int)(L / Q);
 #if SSDN_PROFILE
   uint32_t prof_N = 0, prof_G = 0, prof_A = 0, prof_B = 0, pb_disp = 0, pb_res = 0, pb_epi = 0, pb_upd = 0, pb_bar = 0;
-  if (core == 0 || core == 1) { pi_perf_conf(1 << PI_PERF_CYCLES); pi_perf_reset(); pi_perf_start(); }
+  uint32_t prof_mm = 0;   // core_mm: the two products on the cores (core 0's time, all cores busy)
+  if (core == 0 || core == 1) { pi_perf_conf((1 << PI_PERF_CYCLES) | (1 << PI_PERF_INSTR) | (1 << PI_PERF_LD_STALL) | (1 << PI_PERF_IMISS) | (1 << PI_PERF_LD_EXT) | (1 << PI_PERF_LD_EXT_CYC) | (1 << PI_PERF_ST_EXT)); pi_perf_reset(); pi_perf_start(); }
   SSDN_T(prof_t0);
 #endif
 
@@ -1713,6 +1784,7 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
         for (uint32_t hh = 0; hh < NHt; hh++) {
           const int8_t *wh = w8 + (decay_mode == 1 ? 0 : hh * WSZ);
           int32_t *a = acc + (hh & 1) * ASZ;
+          SSDN_T(pm_t0);
           if (fused) {
             ssdn_core_mm(xt + hh * PXA * KIF, wh, a, PXA, KIF, KOF, (uint32_t)core);
           } else {
@@ -1720,6 +1792,9 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
           ssdn_core_mm(su + hh * PXA * N, wh + QR * QR + N * QR, a + PXA * (QR + N), PXA, N, QR, (uint32_t)core);
           }
           pi_cl_team_barrier();
+#if SSDN_PROFILE
+          if (core == 0) prof_mm += pi_perf_read(PI_PERF_CYCLES) - pm_t0;
+#endif
           ssdn_finish_head(cxp, hh + 1, (uint32_t)core, NUM_CORES);
           pi_cl_team_barrier();
         }
@@ -1744,8 +1819,12 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
 #endif
         if (hh > 0) {
           if (hh < NHt) {  // core 0 dispatched head hh: cores 1..7 finish head hh-1
+#if SSDN_CORE0_EPI   // core 0 joins after its dispatch: 8 workers instead of 7 (same elements, bit-identical)
+            ssdn_finish_head(cxp, hh, (uint32_t)core, NUM_CORES);
+#else
             if (core > 0)
               ssdn_finish_head(cxp, hh, (uint32_t)core - 1, NUM_CORES - 1);
+#endif
           } else {
             ssdn_finish_head(cxp, hh, (uint32_t)core, NUM_CORES);
           }
@@ -1769,12 +1848,19 @@ void GAP9_SSDScanNE16_i8_i8(const int8_t *__restrict__ x, const int8_t *__restri
   }
   pi_cl_team_barrier();
 #if SSDN_PROFILE
-  if (core == 0) printf("SSDN_PROF N=%u NHt=%u L=%u G=%u A=%u B=%u total=%u core0: dispatch=%u resolve_wait=%u\n", prof_N, NHt, L, prof_G, prof_A, prof_B, pi_perf_read(PI_PERF_CYCLES) - prof_t0, pb_disp, pb_res);
-  pi_cl_team_barrier();
   if (core == 1) { (void)pb_epi; (void)pb_upd; }
   if (core == 1) { ssdn_p1[0] = ssdn_p_epi; ssdn_p1[1] = ssdn_p_upd; ssdn_p1[2] = pb_bar; }
   pi_cl_team_barrier();
-  if (core == 0) printf("SSDN_PROF core1: epilogue=%u state_update=%u barrier_wait=%u\n", ssdn_p1[0], ssdn_p1[1], ssdn_p1[2]);
+#if SSDN_PROFILE == 2
+  if (core == 0) {
+    uint32_t *a = ssdn_prof_acc; a[0] += 1; a[1] += prof_G; a[2] += prof_A; a[3] += prof_B; a[4] += pi_perf_read(PI_PERF_CYCLES) - prof_t0;
+    a[5] += pb_disp; a[6] += pb_res; a[7] += prof_mm; a[8] = ssdn_p1[0]; a[9] = ssdn_p1[1]; a[10] += ssdn_p1[2]; a[11] += NHt;   // epi/state are cumulative statics
+  }
+#else
+  if (core == 0) printf("SSDN_PROF N=%u NHt=%u L=%u G=%u A=%u B=%u total=%u core0: dispatch=%u resolve_wait=%u mm=%u\n", prof_N, NHt, L, prof_G, prof_A, prof_B, pi_perf_read(PI_PERF_CYCLES) - prof_t0, pb_disp, pb_res, prof_mm);
+  if (core == 0) printf("SSDN_PROF core1: epilogue=%u state_update=%u barrier_wait=%u epi_last=%u n_mid=%u ev instr=%u ldstall=%u imiss=%u ldext=%u ldextcyc=%u stext=%u\n", ssdn_p1[0], ssdn_p1[1], ssdn_p1[2], ssdn_p_epi_last, ssdn_n_epi_mid, ssdn_ev[0], ssdn_ev[1], ssdn_ev[2], ssdn_ev[3], ssdn_ev[4], ssdn_ev[5]);
+#endif
+  pi_cl_team_barrier();
 #endif
 }
 
