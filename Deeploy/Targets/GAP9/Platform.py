@@ -18,7 +18,7 @@ from Deeploy.Targets.GAP9.Tiler import DeQuantTilingReadyBindings, GAP9AddTiling
     GAP9ConcatTilingReadyBindings, GAP9Conv2DTilingReadyBindings, GAP9DWConv2DTilingReadyBindings, \
     GAP9FlattenTilingReadyBindings, GAP9FPGELUTilingReadyBindings, GAP9FPGEMMTilingReadyBindings, \
     GAP9GatherTilingReadyBindings, GAP9iHardswishTilingReadyBindings, GAP9iRMSNormTilingReadyBindings, GAP9RMSNormI32TilingReadyBindings, \
-    GAP9iRQSGELUTilingReadyBindings, GAP9LayernormTilingReadyBindings, GAP9MatMulTilingReadyBindings, \
+    GAP9iRQSGELUTilingReadyBindings, GAP9LayernormTilingReadyBindings, GAP9FloatRMSNormTilingReadyBindings, GAP9MatMulTilingReadyBindings, \
     GAP9MaxPool2DTilingReadyBindings, GAP9MulTilingReadyBindings, GAP9NE16GEMMInt32TilingReadyBindings, \
     GAP9NE16RQSGEMMTilingReadyBindings, GAP9ReduceSumTilingReadyBindings, GAP9ReluTilingReadyBindings, GAP9SigmoidTilingReadyBindings, GAP9TanhTilingReadyBindings, \
     GAP9RQAddTilingReadyBindings, GAP9RQSConv2DTilingReadyBindings, GAP9RQSDWConv2DTilingReadyBindings, \
@@ -47,7 +47,7 @@ from Deeploy.Targets.GAP9.Tiler import GAP9AddTilingReadyBindings, GAP9ConcatTil
     GAP9SliceTilingReadyBindings, GAP9ReduceMeanTilingReadyBindings, GAP9DequantTilingReadyBindings
 from Deeploy.Targets.Generic.Bindings import BasicGEMMBindings, BasicPad1DBindings, BasicPad2DBindings, \
     BasicRQIntegerDivBinding
-from Deeploy.Targets.Generic.Layers import AddLayer, ConcatLayer, ConvLayer, GatherLayer, GELULayer, GEMMLayer, \
+from Deeploy.Targets.Generic.Layers import RMSNormLayer, AddLayer, ConcatLayer, ConvLayer, GatherLayer, GELULayer, GEMMLayer, \
     LayerNormLayer, MatMulLayer, MaxPoolLayer, MulLayer, PadLayer, QuantLayer, ReduceMeanLayer, ReduceSumLayer, \
     ReluLayer, SigmoidLayer, TanhLayer, RequantShiftLayer, ReshapeLayer, RQIntegerDivLayer, RQSiGELULayer, RQSiHardswishLayer, SGDLayer, \
     SILULayer, SliceLayer, SoftmaxCrossEntropyLossGradLayer, SoftmaxCrossEntropyLossLayer, SoftmaxGradLayer, \
@@ -76,7 +76,7 @@ from Deeploy.Targets.PULPOpen.Bindings import BasicDequantBindings, BasicQuantBi
     PULPRQSConv1DBindings, PULPSliceBindings
 from Deeploy.Targets.PULPOpen.Layers import PULPRQSConvLayer, PULPRQSGEMMLayer, PULPSelectiveScanI16Layer, PULPSelectiveScanLayer, \
     PULPSoftplusLayer, PULPSSDScanLayer, PULPSSDScanNE16Layer, PULPMamba3ScanLayer, PULPStaticScanLayer, PULPM3GatesLayer
-from Deeploy.Targets.PULPOpen.Parsers import PULPConv1DParser, PULPConv2DParser, PULPDWConv1DParser, \
+from Deeploy.Targets.PULPOpen.Parsers import PULPFloatRMSNormParser, PULPConv1DParser, PULPConv2DParser, PULPDWConv1DParser, \
     PULPDWConv2DParser, PULPFPConv2DParser, PULPFPDWConv2DParser, PULPGEMMParser, PULPMatrixVecParser, \
     PULPReduceMeanParser, PULPSelectiveScanI16Parser, PULPSelectiveScanParser, PULPSoftplusParser, PULPSSDScanParser, PULPSSDScanNE16Parser, PULPRMSNormI32Parser, PULPStaticScanNE16Parser, PULPM3GatesParser, PULPMamba3ScanParser, PULPTallGEMMParser
 
@@ -122,6 +122,7 @@ GAP9_Softmax_int8_Mapper = NodeMapper(iSoftmaxParser(), GAP9SoftmaxTilingReadyBi
 GAP9_ConcatMapper = NodeMapper(ConcatParser(), GAP9ConcatTilingReadyBindings)
 GAP9_DMASliceMapper = NodeMapper(SliceParser(), PULPDMASliceBindings)
 GAP9_SliceMapper = NodeMapper(SliceParser(), GAP9SliceTilingReadyBindings)
+GAP9_FloatRMSNormMapper = NodeMapper(PULPFloatRMSNormParser(), GAP9FloatRMSNormTilingReadyBindings)
 GAP9_iRMSNormMapper = NodeMapper(iRMSNormParser(), GAP9iRMSNormTilingReadyBindings)
 GAP9_RMSNormI32Mapper = NodeMapper(PULPRMSNormI32Parser(), GAP9RMSNormI32TilingReadyBindings)
 GAP9_iHardswishMapper = NodeMapper(iHardswishParser(), GAP9iHardswishTilingReadyBindings)
@@ -258,6 +259,8 @@ GAP9Mapping = {
         AddLayer([GAP9_RQAddMapper]),
     'Concat':
         ConcatLayer([GAP9_ConcatMapper]),
+    'RMSNorm':
+        RMSNormLayer([GAP9_FloatRMSNormMapper]),
     'iRMSNorm':
         iRMSNormLayer([GAP9_iRMSNormMapper]),
     'iHardswish':

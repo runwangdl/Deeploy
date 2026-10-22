@@ -865,6 +865,34 @@ class PULPRMSNormI32Parser(NodeParser):
         return ctxt, True
 
 
+class PULPFloatRMSNormParser(NodeParser):
+    """FP32 RMSNorm: y = x / sqrt(mean(x^2) + eps) * weight, row-wise over the last dimension. Op 'RMSNorm', inputs
+    (x, weight), attr eps/epsilon. Kernel PULP_RMSNorm_fp32_fp32 (TargetLibraries/PULPOpen/src/RMSNorm_fp32.c)."""
+
+    def __init__(self):
+        super().__init__()
+
+    def parseNode(self, node: gs.Node) -> bool:
+        ret = node.op == 'RMSNorm' and len(node.inputs) == 2 and len(node.outputs) == 1
+        if ret:
+            eps = node.attrs.get('eps', node.attrs.get('epsilon', 1e-6))
+            self.operatorRepresentation['eps'] = f"{float(eps):.10e}f"
+        return ret
+
+    def parseNodeCtxt(self, ctxt: NetworkContext, node: gs.Node, channels_first: bool = True) -> Tuple[NetworkContext, bool]:
+        for idx, name in enumerate(['data_in', 'weight']):
+            self.operatorRepresentation[name] = ctxt.lookup(node.inputs[idx].name).name
+        self.operatorRepresentation['data_out'] = ctxt.lookup(node.outputs[0].name).name
+        shape = list(ctxt.lookup(node.inputs[0].name).shape)
+        self.operatorRepresentation['inputSize'] = int(np.prod(shape))
+        self.operatorRepresentation['lastDimLength'] = int(shape[-1])
+        # RMSNormLayer.computeOps reads both
+        self.operatorRepresentation['NormalizedAxesSize'] = int(shape[-1])
+        weight = ctxt.lookup(node.inputs[1].name)
+        self.operatorRepresentation['scale'] = np.asarray(getattr(weight, 'values', np.zeros(shape[-1])))
+        return ctxt, True
+
+
 class PULPStaticScanNE16Parser(NodeParser):
     """StaticScan_NE16: constant-parameter Mamba-2 block (decay, Delta, B, C fixed) as per-head NE16 1x1 jobs over the
     whole window. inputs: x int8 [B,L,D], z int8 [B,L,D], wenc uint8 [H, L*L] (NE16 weight layout), comp int32 [H,L],

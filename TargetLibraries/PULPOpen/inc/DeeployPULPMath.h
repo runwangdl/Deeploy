@@ -35,6 +35,7 @@
 #include "kernel/RequantShift.h"
 #include "kernel/SILU.h"
 #include "kernel/SelectiveScan.h"
+#include "kernel/RMSNorm_fp32.h"
 #include "kernel/Sigmoid.h"
 #include "kernel/Softmax.h"
 #include "kernel/Tanh.h"

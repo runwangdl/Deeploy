@@ -24,7 +24,7 @@ from Deeploy.Targets.GAP9.Templates import GAP9SDKDequantQuantTemplate, NE16GEMM
 # Import templates from PULPOpen and Generic
 from Deeploy.Targets.Generic.Templates import AddTemplate, ConcatTemplate, DequantTemplate, FloatReduceMeanTemplate, \
     FloatReduceSumTemplate, GatherTemplate, RQSiGELUTemplate, SliceTemplate, iHardswishTemplate
-from Deeploy.Targets.Generic.TypeCheckers import DummyChecker, AddChecker, ConcatChecker, ConvChecker, DequantChecker, \
+from Deeploy.Targets.Generic.TypeCheckers import DummyChecker, RMSNormChecker, AddChecker, ConcatChecker, ConvChecker, DequantChecker, \
     GatherChecker, GELUChecker, GEMMChecker, HardswishChecker, LayerNormChecker, MatMulChecker, MulChecker, \
     QuantChecker, ReduceMeanChecker, ReduceSumChecker, ReluChecker, ReshapeChecker, RQAddChecker, \
     RQHardswishChecker, SGDChecker, SILUChecker, SliceChecker, SoftmaxChecker, SoftmaxCrossEntropyLossChecker, \
@@ -32,6 +32,7 @@ from Deeploy.Targets.Generic.TypeCheckers import DummyChecker, AddChecker, Conca
 from Deeploy.Targets.PULPOpen.Bindings import ForkClosure, L3MemoryAwareFunctionCallClosure, \
     MemoryAwareForkTransformer, MemoryAwareFunctionCallClosure, TilingCallClosure
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterSynch import PULPSynchCoresPass
+from Deeploy.Targets.PULPOpen.Templates import FloatRMSNormTemplate
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPClusterTiling import PULPClusterTiling
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPL3Tiling import PULPL3Tiling
 from Deeploy.Targets.PULPOpen.CodeTransformationPasses.PULPProfileUntiled import PULPProfileUntiled
@@ -509,6 +510,10 @@ GAP9LayernormBinding = NodeBinding(
         [PointerClass(float32_t), PointerClass(float32_t),
          PointerClass(float32_t)], [PointerClass(float32_t)]), FloatLayernormTemplate.referenceTemplate,
     GAP9Transformer)
+
+GAP9FloatRMSNormBinding = NodeBinding(
+    RMSNormChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
+    FloatRMSNormTemplate.referenceTemplate, GAP9Transformer)
 
 GAP9FloatGELUBinding = NodeBinding(
     GELUChecker([PointerClass(float32_t), PointerClass(float32_t)], [PointerClass(float32_t)]),
